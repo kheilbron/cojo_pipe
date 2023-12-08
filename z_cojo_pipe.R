@@ -336,7 +336,7 @@ format_gwas <- function( maindir          = "~/cojo",
   # Column names/order: SNP, A1, A2, p, b, se, freq, N
   message2("Dump GWAS summary statistics")
   gw_outfile <- file.path( maindir, "gwas_sumstats.tsv" )
-  gw_out <- gw3[ , c( "SNP", "A1", "A2", "p", "b", "se", "freq", "N" ) ]
+  gw_out <- gw3[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N" ) ]
   fwrite( x=gw_out, file=gw_outfile, sep="\t" )
   
   
