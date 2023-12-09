@@ -109,7 +109,7 @@ format_gwas <- function( maindir          = "~/cojo",
   #-------------------------------------------------------------------------------
   
   # Load libraries and sources
-  source("") # source this script
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
   library(data.table)
   
@@ -354,7 +354,7 @@ run_cojo <- function(maindir){
   
   # Load libraries and sources
   library(data.table)
-  source("") # source this script
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   
   # Create a directory for per-chromosome COJO outputs
   
@@ -397,7 +397,7 @@ isolate_signals <- function(maindir){
   
   # Load libraries and sources
   library(data.table)
-  source("") # source this script
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   
   # If output files already exist, skip
   # Read in collated COJO results
@@ -420,7 +420,7 @@ credible_sets <- function(maindir){
   # Load libraries and sources
   library(data.table)
   library(coloc)
-  source("") # source this script
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   
   # If output files already exist, skip
   # Loop through independent hits
@@ -444,7 +444,7 @@ credible_sets <- function(maindir){
 cojo_wrapper <- function(){
   
   # Load libraries and sources
-  source("") # source this script
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   
   # Make a project area
   dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
