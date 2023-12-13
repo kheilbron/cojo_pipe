@@ -2,7 +2,7 @@
 
 
 #-------------------------------------------------------------------------------
-#   Simple functions
+#   simple_functions
 #-------------------------------------------------------------------------------
 
 # message2:             Just like message, but with the date and a gap pasted in
@@ -29,7 +29,7 @@ n_eff <- function( n.cases, n.controls ){
 
 
 #-------------------------------------------------------------------------------
-#   check_inputs:     Check validity of inputs
+#   check_inputs:      Check validity of inputs
 #-------------------------------------------------------------------------------
 
 check_inputs <- function(){
@@ -38,7 +38,7 @@ check_inputs <- function(){
 
 
 #-------------------------------------------------------------------------------
-#   format_gwas:      Write GWAS sumstats in COJO format
+#   format_gwas:       Write GWAS sumstats in COJO format
 #-------------------------------------------------------------------------------
 
 format_gwas <- function( maindir          = "~/cojo",
@@ -63,7 +63,6 @@ format_gwas <- function( maindir          = "~/cojo",
   
   # If output files already exist, skip
   # If specified, correct for inflation
-  # Format GWAS to have columns: SNP, A1, A2, p, b, se, freq, N
   # Write the list of SNP names to file
   # Write the GWAS summary statistics to file
   
@@ -155,7 +154,7 @@ format_gwas <- function( maindir          = "~/cojo",
   # If specified, remove SNPs with weak P values to speed up computation
   if( p_threshold < 1 ){
     message2("Remove SNPs with weak P values to speed up computation")
-    gw <- gw0[ gw0$P < p_threshold , ]
+    gw <- gw0[ gw0$p < p_threshold , ]
   }else{
     gw <- gw0
   }
@@ -227,10 +226,11 @@ format_gwas <- function( maindir          = "~/cojo",
   # For discordant non-palindromic SNPs: flip GWAS alleles
   message2("For discordant non-palindromic SNPs: flip GWAS alleles")
   disc_nonpal <- discord & !pal
-  original_gwas_ref <- gw2$A2
-  original_gwas_alt <- gw2$A1
-  gw2$A2[disc_nonpal] <- original_gwas_alt[disc_nonpal]
-  gw2$A1[disc_nonpal] <- original_gwas_ref[disc_nonpal]
+  original_gwas_A2 <- gw2$A2
+  original_gwas_A1 <- gw2$A1
+  gw2$A2[disc_nonpal] <- original_gwas_A1[disc_nonpal]
+  gw2$A1[disc_nonpal] <- original_gwas_A2[disc_nonpal]
+  gw2$b[disc_nonpal]  <- -1 * gw2$b[disc_nonpal]
   if( "freq" %in% names(gw2) ){
     gw2$freq[disc_nonpal] <- 1  - gw2$freq[disc_nonpal]
   }
@@ -249,9 +249,10 @@ format_gwas <- function( maindir          = "~/cojo",
     # For discordant palindromic SNPs with compatible AFs: flip GWAS alleles
     diff_af_disc    <- abs( ( 1 - gw2$freq ) - hrc2$af ) > 0.2 | hrc2$af > 0.4
     disc_pal_compat <- discord & pal & !diff_af_disc
-    gw2$A2[disc_pal_compat]  <- original_gwas_alt[disc_pal_compat]
-    gw2$A1[disc_pal_compat]  <- original_gwas_ref[disc_pal_compat]
+    gw2$A2[disc_pal_compat]   <- original_gwas_A1[disc_pal_compat]
+    gw2$A1[disc_pal_compat]   <- original_gwas_A2[disc_pal_compat]
     gw2$freq[disc_pal_compat] <- 1  - gw2$freq[disc_pal_compat]
+    gw2$b[disc_pal_compat]    <- -1 * gw2$b[disc_pal_compat]
     message2( sum(disc_pal_compat), "/", sum(discord), 
               " (", round( 100 * sum(disc_pal_compat) / sum(discord), 2 ), 
               "%) discordant SNPs were palindromic but with AFs that were clearly ",
@@ -268,7 +269,10 @@ format_gwas <- function( maindir          = "~/cojo",
     diff_af_conc <- abs( gw2$freq - hrc2$af ) > 0.2
     common_af    <- hrc2$af > 0.4
     conc_pal_incompat <- !discord & pal & diff_af_conc & !common_af
+    gw2$A2[conc_pal_incompat]   <- original_gwas_A1[conc_pal_incompat]
+    gw2$A1[conc_pal_incompat]   <- original_gwas_A2[conc_pal_incompat]
     gw2$freq[conc_pal_incompat] <- 1  - gw2$freq[conc_pal_incompat]
+    gw2$b[conc_pal_incompat]    <- -1 * gw2$b[conc_pal_incompat]
     message2( sum(conc_pal_incompat), "/", sum( !discord & pal ), 
               " (", round( 100 * sum(conc_pal_incompat) / sum( !discord & pal ), 2 ), 
               "%) concordant palindromic SNPs had AFs that were clearly ",
@@ -333,11 +337,17 @@ format_gwas <- function( maindir          = "~/cojo",
   #-------------------------------------------------------------------------------
   
   # Dump GWAS summary statistics
-  # Column names/order: SNP, A1, A2, p, b, se, freq, N
+  # Column names/order: SNP, A1, A2, freq, b, se, p, N, chr, bp
   message2("Dump GWAS summary statistics")
-  gw_outfile <- file.path( maindir, "gwas_sumstats.tsv" )
-  gw_out <- gw3[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N" ) ]
-  fwrite( x=gw_out, file=gw_outfile, sep="\t" )
+  gw_outfile     <- file.path( maindir, "gwas_sumstats.tsv" )
+  gw_outfile_1e3 <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
+  gw_outfile_1e4 <- file.path( maindir, "gwas_sumstats_1e4.tsv" )
+  gw_out <- gw3[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N", "chr", "bp" ) ]
+  gw_1e3 <- gw_out[ gw$p < 1e-3 , ]
+  gw_1e4 <- gw_out[ gw$p < 1e-4 , ]
+  fwrite( x=gw_out, file=gw_outfile,     sep="\t" )
+  fwrite( x=gw_1e3, file=gw_outfile_1e3, sep="\t" )
+  fwrite( x=gw_1e4, file=gw_outfile_1e4, sep="\t" )
   
   
   #-------------------------------------------------------------------------------
@@ -347,50 +357,195 @@ format_gwas <- function( maindir          = "~/cojo",
 
 
 #-------------------------------------------------------------------------------
-#   run_cojo:         Get independent hits
+#   define_loci_clump: Clump SNPs, add buffer, merge overlapping regions
 #-------------------------------------------------------------------------------
 
-run_cojo <- function(maindir){
+define_loci_clump <- function(maindir){
   
   # Load libraries and sources
-  library(data.table)
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  library(data.table)
+  library(IRanges)
   
-  # Create a directory for per-chromosome COJO outputs
+  # If output file already exists, skip
+  clmp_loci_file <- file.path( maindir, "loci_clumped.tsv" )
+  if( file.exists(clmp_loci_file) ){
+    message2("Clumped loci file already exists, skipping")
+    return()
+  }
   
-  # Set static COJO arguments
-  gcta_binary    <- ""                        # path to GCTA software
-  cojo_file      <- file.path( maindir, "" )  # from previous step
-  cojo_p         <- 5e-8                      # p-value cutoff for significance
-  max_hits       <- 100                       # prevents runaway computation
+  # Create a directory for per-chromosome clumping outputs
+  message2("Create a directory for per-chromosome clumping outputs")
+  clump_dir <- file.path( maindir, "clumps" )
+  dir.create( clump_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Set static clumping arguments
+  message2("Set static clumping arguments")
+  plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
+  gw_file  <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Loop through chromosomes
-  for( i in chromosomes ){
+  for( i in 1:22 ){
     
-    # Set per-chromosome COJO arguments
-    bed_file       <- ""
-    outfile_prefix <- ""
+    # Set per-chromosome clumping arguments
+    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", i, 
+                        ".impute.plink.combined.EUR.2191.EAS.538" )
+    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    out_pre  <- file.path( clump_dir, paste0( "chr", i ) )
+    outfile  <- paste0( out_pre, ".clumped" )
     
     # If the output file already exists, skip
+    if( file.exists(outfile) ){
+      message2( "Output file for chromosome: ", i, " already exists, skipping" )
+      next
+    }
     
-    # Run COJO
-    message2( "Running COJO on chromosome: ", i )
-    cmd <- paste( gcta_binary, 
-                  "--bfile",         bed_file, 
-                  "--cojo-file",     cojo_file,
-                  "--cojo-slct",
-                  "--cojo-p",        cojo_p,
-                  "--cojo-top-SNPs", max_hits,
-                  "--out",           outfile_prefix )
+    # Run clumping
+    message2( "Clumping chromosome: ", i )
+    cmd <- paste( plink, 
+                  "--bfile",          bed_file, 
+                  "--clump",          gw_file,
+                  "--clump-p1",       5e-8,
+                  "--clump-field",    "p",
+                  "--clump-r2",       0.1,
+                  "--clump-kb",       3000,
+                  "--out",            out_pre )
     system(cmd)
   }
   
-  # Collate results across chromosomes into a single file
+  # Collate results across chromosomes
+  message2("Collate results across chromosomes")
+  clump_files <- list.files( path=clump_dir, pattern=".clumped$", full.names=TRUE )
+  clmp0 <- lapply( clump_files, fread )
+  clmp  <- do.call( rbind, clmp0 )
+  clmp$hi.pos <- clmp$lo.pos <- NA
+  clmp <- clmp[ order( clmp$CHR, clmp$BP ) , ]
+  
+  # Read in GWAS sumstats
+  message2("Read in GWAS sumstats")
+  gw <- fread(gw_file)
+  
+  # For each LD-independent variant, define locus boundaries
+  message2("For each LD-independent variant, define locus boundaries")
+  for( i in seq_len( NROW(clmp) ) ){
+    
+    # Subset
+    message2( "Starting SNP ", i, "/", NROW(clmp) )
+    sub <- clmp[i,]
+    
+    # Split LD friends, remove the suffix, add the chosen SNP
+    ldf  <- strsplit( x=sub$SP2, split="," )[[1]]
+    ldf2 <- sub( pattern="\\([[:digit:]]+\\)$", replacement="", x=ldf )
+    ldf3 <- c( sub$SNP, ldf2 )
+    ldf4 <- setdiff( x=ldf3, y="NONE" )
+    
+    # Find position of each SNP in the GWAS sumstats
+    pos <- gw$bp[ match( ldf4, gw$SNP ) ]
+    
+    # Assign lo.pos and hi.pos, including 1Mb buffer
+    clmp$lo.pos[i] <- min(pos) - 1e6
+    clmp$hi.pos[i] <- max(pos) + 1e6
+  }
+  
+  # Merge overlapping loci
+  message2("Merge overlapping loci")
+  gcols <- c( "SNP", "P", "CHR", "BP", "lo.pos", "hi.pos" )
+  clmp2 <- clmp[ , ..gcols ]
+  clmp3 <- list()
+  for( i in unique(clmp2$CHR) ){
+    ir  <- IRanges( start = clmp2$lo.pos[ clmp2$CHR == i ], 
+                    end   = clmp2$hi.pos[ clmp2$CHR == i ] )
+    ir2 <- reduce(ir)
+    clmp3[[i]] <- data.table( chr=i, lo.pos=ir2@start, 
+                              hi.pos=ir2@start + ir2@width - 1 )
+  }
+  clmp4 <- do.call( rbind, clmp3 )
+  
+  # Write merged loci to file
+  message2("Write merged loci to file")
+  fwrite( x=clmp4, file=clmp_loci_file, sep="\t" )
 }
 
 
 #-------------------------------------------------------------------------------
-#   isolate_signals:  Extract conditioned sumstats for each independent hit
+#   run_cojo_genome:   Get independent hits across the whole genome
+#-------------------------------------------------------------------------------
+
+run_cojo_genome <- function( maindir, r=0.9 ){
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries and sources
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  library(data.table)
+  
+  # If output file already exists, skip
+  jma_outfile <- file.path( maindir, "hits_all.jma.cojo" )
+  if( file.exists(jma_outfile) ){
+    message2("Locus-agnostic hits file already exists, skipping")
+    return()
+  }
+  
+  # Set static COJO arguments
+  message2("Set static COJO arguments")
+  gcta_binary    <- file.path( "/projects/0/prjs0817/software/gcta/",
+                               "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
+  cojo_file      <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
+  cojo_p         <- 5e-8
+  
+  # Create a directory for per-chromosome COJO outputs
+  message2("Create a directory for per-chromosome COJO outputs")
+  hits_dir <- file.path( maindir, "hits" )
+  dir.create( hits_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Loop through chromosomes
+  for( i in 1:22 ){
+    
+    # Set per-chromosome COJO arguments
+    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", i, 
+                        ".impute.plink.combined.EUR.2191.EAS.538" )
+    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    out_pre  <- file.path( hits_dir, paste0( "chr", i ) )
+    outfile  <- paste0( out_pre, ".jma.cojo" )
+    
+    # If the output file already exists, skip
+    if( file.exists(outfile) ){
+      message2( "Output file for chromosome: ", i, " already exists, skipping" )
+      next
+    }
+    
+    # Run COJO
+    message2( "Running COJO on chromosome: ", i )
+    cmd <- paste( gcta_binary, 
+                  "--bfile",          bed_file, 
+                  "--cojo-file",      cojo_file,
+                  "--cojo-slct",
+                  "--cojo-p",         cojo_p,
+                  "--cojo-collinear", r,
+                  "--out",            out_pre )
+    system(cmd)
+  }
+  
+  # Collate results across chromosomes
+  message2("Collate results across chromosomes")
+  jma_files <- list.files( path=hits_dir, pattern=".jma.cojo$", full.names=TRUE )
+  jma0 <- lapply( X=jma_files, FUN=fread )
+  jma  <- do.call( rbind, jma0 )
+  jma  <- jma[ order( jma$Chr, jma$bp ) , ]
+  
+  # Write results to file
+  message2("Write results to file")
+  fwrite( x=jma, file=jma_outfile, sep="\t" )
+}
+
+
+#-------------------------------------------------------------------------------
+#   isolate_signals:   Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
 isolate_signals <- function(maindir){
@@ -412,7 +567,7 @@ isolate_signals <- function(maindir){
 
 
 #-------------------------------------------------------------------------------
-#   credible_sets:    Compute credible sets for each (conditioned) hit
+#   credible_sets:     Compute credible sets for each (conditioned) hit
 #-------------------------------------------------------------------------------
 
 credible_sets <- function(maindir){
@@ -438,7 +593,7 @@ credible_sets <- function(maindir){
 
 
 #-------------------------------------------------------------------------------
-#   cojo_wrapper:     Runs the pipeline
+#   cojo_wrapper:      Runs the pipeline
 #-------------------------------------------------------------------------------
 
 cojo_wrapper <- function(){
