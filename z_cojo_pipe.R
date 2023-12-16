@@ -64,12 +64,11 @@ format_gwas <- function( maindir          = "~/cojo",
   # If output files already exist, skip
   # If specified, correct for inflation
   # Write the list of SNP names to file
-  # Write the GWAS summary statistics to file
   
   
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   #   Input descriptions
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   
   #   maindir:    Main directory in which to store results
   #   ld_panel:   Which LD reference panel should be used? Options are either: 
@@ -103,9 +102,9 @@ format_gwas <- function( maindir          = "~/cojo",
   #               specified, must specify both n1_col and n0_col, or n_col.
   
   
-  #-------------------------------------------------------------------------------
-  #   Read in GWAS and HRC, format columns, subset to shared SNPs
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
+  #   Read in GWAS and HRC, format columns
+  #-----------------------------------------------------------------------------
   
   # Load libraries and sources
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
@@ -162,12 +161,13 @@ format_gwas <- function( maindir          = "~/cojo",
   # Make columns for chromosome and position
   if( "chr_bp" %in% names(gw) ){
     message2("Make columns for chromosome and position")
-    gw$chr <- as.integer( sub( pattern     = "^chr([[:alnum:]]+)[[:punct:]]([[:digit:]]+)$", 
-                               replacement = "\\1", 
-                               x=gw$chr_bp ) )
-    gw$bp  <- as.integer( sub( pattern     = "^chr([[:alnum:]]+)[[:punct:]]([[:digit:]]+)$", 
-                               replacement = "\\2", 
-                               x=gw$chr_bp ) )
+    pattern <- "^chr([[:alnum:]]+)[[:punct:]]([[:digit:]]+)$"
+    gw$chr  <- as.integer( sub( pattern     = pattern, 
+                                replacement = "\\1", 
+                                x=gw$chr_bp ) )
+    gw$bp   <- as.integer( sub( pattern     = pattern, 
+                                replacement = "\\2", 
+                                x=gw$chr_bp ) )
   }
   
   # Create a per-SNP effective sample size column
@@ -177,10 +177,12 @@ format_gwas <- function( maindir          = "~/cojo",
   if( "N" %in% names(gw) ){
     message2("An effective sample size column has been provided and will be used")
   }else if( !is.null(n) ){
-    message2("A study-wide effective sample size has been provided and will be applied to all SNPs")
+    message2("A study-wide effective sample size has been provided and will be ",
+             "applied to all SNPs")
     gw$N <- n
   }else if( "n1" %in% names(gw) & "n0" %in% names(gw) ){
-    message2("Columns for number of cases and controls have been provided for each SNP, computing the effective sample size")
+    message2("Columns for number of cases and controls have been provided for ",
+             "each SNP, computing the effective sample size")
     gw$N <- n_eff( gw$n1, gw$n0 )
   }
   
@@ -191,12 +193,13 @@ format_gwas <- function( maindir          = "~/cojo",
   }
   
   
-  #-------------------------------------------------------------------------------
-  #   Harmonize GWAS and reference panel alleles: without allele frequency information
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
+  #   Harmonize GWAS and reference panel alleles
+  #-----------------------------------------------------------------------------
   
   # Subset GWAS and reference panel to shared SNPs based on chromosome and position
-  message2("Subset GWAS and reference panel to shared SNPs based on chromosome and position")
+  message2("Subset GWAS and reference panel to shared SNPs based on chromosome ",
+           "and position")
   cpab_gw  <- paste( gw$chr,  gw$bp,  
                      ifelse( gw$A1   < gw$A2,   gw$A1,   gw$A2  ), 
                      ifelse( gw$A1   < gw$A2,   gw$A2,   gw$A1  ),  sep="_" )
@@ -207,118 +210,30 @@ format_gwas <- function( maindir          = "~/cojo",
   hrc2 <- hrc[ match( cpab_both, cpab_hrc ) , ]
   gw2  <- gw[  match( cpab_both, cpab_gw  ) , ]
   message2( "Of the ", NROW(gw), " GWAS SNPs, ", NROW(gw2), 
-            " (", round( 100*NROW(gw2)/NROW(gw), 2 ), "%) were found in the reference panel" )
+            " (", round( 100*NROW(gw2)/NROW(gw), 2 ), 
+            "%) were found in the reference panel" )
   message2( "Of the ", NROW(hrc), " reference panel SNPs, ", NROW(hrc2), 
-            " (", round( 100*NROW(hrc2)/NROW(hrc), 2 ), "%) were found in the GWAS" )
+            " (", round( 100*NROW(hrc2)/NROW(hrc), 2 ), 
+            "%) were found in the GWAS" )
   
-  # Find palindromic SNPs and SNPs with alleles that are flipped in 
-  # the reference panel v. GWAS ('discordant')
-  message2("Find palindromic SNPs and SNPs with alleles that are flipped in ",
-           "the reference panel v. GWAS ('discordant')")
-  pal     <- ( hrc2$alt=="A" & hrc2$ref=="T" ) | 
-    ( hrc2$alt=="T" & hrc2$ref=="A" ) | 
-    ( hrc2$alt=="C" & hrc2$ref=="G" ) | 
-    ( hrc2$alt=="G" & hrc2$ref=="C" )
+  # Flip SNPs with discordant alleles (flipped in reference v. GWAS)
+  message2("Flip SNPs with discordant alleles (flipped in reference v. GWAS)")
   discord <- hrc2$alt != gw2$A1
-  message2( sum(pal),     "/", NROW(hrc2), " (", round( 100 * sum(pal)     / NROW(hrc2), 2 ), "%) SNPs are palindromic" )
-  message2( sum(discord), "/", NROW(hrc2), " (", round( 100 * sum(discord) / NROW(hrc2), 2 ), "%) SNPs have discordant alleles" )
-  
-  # For discordant non-palindromic SNPs: flip GWAS alleles
-  message2("For discordant non-palindromic SNPs: flip GWAS alleles")
-  disc_nonpal <- discord & !pal
   original_gwas_A2 <- gw2$A2
   original_gwas_A1 <- gw2$A1
-  gw2$A2[disc_nonpal] <- original_gwas_A1[disc_nonpal]
-  gw2$A1[disc_nonpal] <- original_gwas_A2[disc_nonpal]
-  gw2$b[disc_nonpal]  <- -1 * gw2$b[disc_nonpal]
-  if( "freq" %in% names(gw2) ){
-    gw2$freq[disc_nonpal] <- 1  - gw2$freq[disc_nonpal]
-  }
-  message2( sum(disc_nonpal), "/", sum(discord), 
-            " (", round( 100 * sum(disc_nonpal) / sum(discord), 2 ), 
-            "%) discordant SNPs were non-palindromic, flipping alleles" )
+  gw2$A2[discord]   <- original_gwas_A1[discord]
+  gw2$A1[discord]   <- original_gwas_A2[discord]
+  gw2$b[discord]    <- -1 * gw2$b[discord]
+  gw2$freq[discord] <- 1  - gw2$freq[discord]
   
   
-  #-------------------------------------------------------------------------------
-  #   Harmonize GWAS and HRC alleles: with allele frequency information
-  #-------------------------------------------------------------------------------
-  
-  # If allele frequency data is available for the GWAS
-  if( "freq" %in% names(gw2) ){
-    
-    # For discordant palindromic SNPs with compatible AFs: flip GWAS alleles
-    diff_af_disc    <- abs( ( 1 - gw2$freq ) - hrc2$af ) > 0.2 | hrc2$af > 0.4
-    disc_pal_compat <- discord & pal & !diff_af_disc
-    gw2$A2[disc_pal_compat]   <- original_gwas_A1[disc_pal_compat]
-    gw2$A1[disc_pal_compat]   <- original_gwas_A2[disc_pal_compat]
-    gw2$freq[disc_pal_compat] <- 1  - gw2$freq[disc_pal_compat]
-    gw2$b[disc_pal_compat]    <- -1 * gw2$b[disc_pal_compat]
-    message2( sum(disc_pal_compat), "/", sum(discord), 
-              " (", round( 100 * sum(disc_pal_compat) / sum(discord), 2 ), 
-              "%) discordant SNPs were palindromic but with AFs that were clearly ",
-              "compatible with the reference panel, flipping alleles" )
-    
-    # Flag discordant palindromic SNPs with incompatible AFs for removal
-    disc_pal_incompat <- discord & pal & diff_af_disc
-    message2( sum(disc_pal_incompat), "/", sum(discord), 
-              " (", round( 100 * sum(disc_pal_incompat) / sum(discord), 2 ), 
-              "%) discordant SNPs were palindromic and had AFs that were not ",
-              "clearly compatible with the reference panel, flagging for removal" )
-    
-    # For concordant palindromic SNPs with clearly incompatible AFs: flip GWAS alleles
-    diff_af_conc <- abs( gw2$freq - hrc2$af ) > 0.2
-    common_af    <- hrc2$af > 0.4
-    conc_pal_incompat <- !discord & pal & diff_af_conc & !common_af
-    gw2$A2[conc_pal_incompat]   <- original_gwas_A1[conc_pal_incompat]
-    gw2$A1[conc_pal_incompat]   <- original_gwas_A2[conc_pal_incompat]
-    gw2$freq[conc_pal_incompat] <- 1  - gw2$freq[conc_pal_incompat]
-    gw2$b[conc_pal_incompat]    <- -1 * gw2$b[conc_pal_incompat]
-    message2( sum(conc_pal_incompat), "/", sum( !discord & pal ), 
-              " (", round( 100 * sum(conc_pal_incompat) / sum( !discord & pal ), 2 ), 
-              "%) concordant palindromic SNPs had AFs that were clearly ",
-              "different from the reference panel, flipped alleles" )
-    
-    # Report the number of concordant palindromic SNPs with clearly compatible AFs
-    conc_pal_compat <- !discord & pal & !diff_af_conc & !common_af
-    message2( sum(conc_pal_compat), "/", sum( !discord & pal ), 
-              " (", round( 100 * sum(conc_pal_compat) / sum( !discord & pal ), 2 ), 
-              "%) concordant palindromic SNPs had AFs that were clearly similar ",
-              "to the reference panel, no action" )
-    
-    # Flag concordant palindromic SNPs with HRC MAF > 40% for removal
-    conc_pal_ambig <- !discord & pal & common_af
-    message2( sum(conc_pal_ambig), "/", sum( !discord & pal ), 
-              " (", round( 100 * sum(conc_pal_ambig) / sum( !discord & pal ), 2 ), 
-              "%) concordant palindromic SNPs had reference panel MAF > 40%, ",
-              "flagging for removal" )
-    
-    # Remove flagged SNPs
-    message2("Remove flagged SNPs")
-    bad_snps <- disc_pal_incompat | conc_pal_ambig
-    gw3  <- gw2[  !bad_snps , ]
-    hrc3 <- hrc2[ !bad_snps , ]
-    
-  }else{
-    
-    # Remove palindromic SNPs
-    message2("Remove palindromic SNPs")
-    gw3  <- gw2[  !pal , ]
-    hrc3 <- hrc2[ !pal , ]
-  }
-  
-  
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   #   Wrap up harmonization
-  #-------------------------------------------------------------------------------
-  
-  # Report the change in number of SNPs
-  message2( "After harmonizing GWAS and reference panel SNPs, ", 
-            NROW(gw3), "/", NROW(gw2), " (", round( 100 * NROW(gw3) / NROW(gw2), 2 ), 
-            "%) remain" )
+  #-----------------------------------------------------------------------------
   
   # Check that CPRA is 100% identical now
-  cpra_gw  <- paste( gw3$chr,  gw3$bp,  gw3$A2,   gw3$A1,   sep="_" )
-  cpra_hrc <- paste( hrc3$chr, hrc3$bp, hrc3$ref, hrc3$alt, sep="_" )
+  cpra_gw  <- paste( gw2$chr,  gw2$bp,  gw2$A2,   gw2$A1,   sep="_" )
+  cpra_hrc <- paste( hrc2$chr, hrc2$bp, hrc2$ref, hrc2$alt, sep="_" )
   if( all( cpra_gw == cpra_hrc ) ){
     message2("CPRA is now identical for all GWAS and reference panel SNPs")
   }else{
@@ -329,30 +244,153 @@ format_gwas <- function( maindir          = "~/cojo",
   
   # Replace GWAS SNP names with reference panel names
   message2("Replace GWAS SNP names with reference panel names")
-  gw3$SNP <- hrc3$snp
+  gw2$SNP <- hrc2$snp
   
   
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   #   Format and write outputs
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   
   # Dump GWAS summary statistics
   # Column names/order: SNP, A1, A2, freq, b, se, p, N, chr, bp
   message2("Dump GWAS summary statistics")
-  gw_outfile     <- file.path( maindir, "gwas_sumstats.tsv" )
-  gw_outfile_1e3 <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
-  gw_outfile_1e4 <- file.path( maindir, "gwas_sumstats_1e4.tsv" )
-  gw_out <- gw3[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N", "chr", "bp" ) ]
-  gw_1e3 <- gw_out[ gw$p < 1e-3 , ]
-  gw_1e4 <- gw_out[ gw$p < 1e-4 , ]
-  fwrite( x=gw_out, file=gw_outfile,     sep="\t" )
-  fwrite( x=gw_1e3, file=gw_outfile_1e3, sep="\t" )
-  fwrite( x=gw_1e4, file=gw_outfile_1e4, sep="\t" )
+  gw_outfile <- file.path( maindir, "gwas_sumstats.tsv" )
+  gw_out <- gw2[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N", "chr", "bp" ) ]
+  fwrite( x=gw_out, file=gw_outfile, sep="\t" )
   
   
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
   #   Done
-  #-------------------------------------------------------------------------------
+  #-----------------------------------------------------------------------------
+}
+
+
+#-------------------------------------------------------------------------------
+#   qc_gwas:       Write GWAS sumstats in COJO format
+#-------------------------------------------------------------------------------
+
+qc_gwas <- function( maindir, ld_panel ){
+  
+  #-----------------------------------------------------------------------------
+  #   Read in GWAS and HRC
+  #-----------------------------------------------------------------------------
+  
+  # Load libraries and sources
+  source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  library(data.table)
+  
+  # Read in reference panel SNPs
+  if( ld_panel == "hrc" ){
+    rare.or.common.snps <- "rare"
+    if( rare.or.common.snps == "common"){
+      message2("Read in HRC SNPs with EUR MAF >= 1%")
+      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
+    }else if( rare.or.common.snps == "rare"){
+      message2("Read in HRC SNPs with EUR MAC >= 10")
+      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
+    }else{
+      stop("rare.or.common must be 'rare' or 'common'")
+    }
+  }else if( ld_panel == "g1000" ){
+    message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
+    hrc <- fread("/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv")
+  }else{
+    stop("ld_panel must be either 'hrc' or 'g1000'")
+  }
+  
+  # Read in GWAS
+  message2("Read in GWAS")
+  gw_file <- file.path( maindir, "gwas_sumstats.tsv" )
+  gw <- fread(gw_file)
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Harmonize GWAS and reference panel alleles
+  #-----------------------------------------------------------------------------
+  
+  # Subset GWAS and reference panel to shared SNPs
+  message2("Subset GWAS and reference panel to shared SNPs")
+  snps_both <- intersect( hrc$snp, gw$SNP )
+  hrc2 <- hrc[ match( snps_both, hrc$snp ) , ]
+  gw2  <- gw[  match( snps_both, gw$SNP  ) , ]
+  message2( "Of the ", NROW(gw), " GWAS SNPs, ", NROW(gw2), 
+            " (", round( 100*NROW(gw2)/NROW(gw), 2 ), 
+            "%) were found in the reference panel" )
+  message2( "Of the ", NROW(hrc), " reference panel SNPs, ", NROW(hrc2), 
+            " (", round( 100*NROW(hrc2)/NROW(hrc), 2 ), 
+            "%) were found in the GWAS" )
+  
+  # Remove SNPs with a large AF difference between the GWAS and reference
+  big_af_diff  <- 0.1
+  big_af_ratio <- 3
+  abs_af   <- abs( gw2$freq - hrc2$af )               > big_af_diff
+  ratio_af <- exp( abs( log( gw2$freq / hrc2$af ) ) ) > big_af_ratio
+  diff_af  <- abs_af | ratio_af
+  message2( sum(diff_af), "/", NROW(hrc2), " SNPs (", 
+            round( 100 * sum(diff_af) / NROW(hrc2), 2 ), 
+            "%) have an absolute AF difference > ", big_af_diff, 
+            " or an absolute AF ratio > ", big_af_ratio,
+            ": flagging for removal" )
+  
+  # Report rare compatible SNPs
+  common_maf <- 0.4
+  comm <- ifelse( hrc2$af <= 0.5, 
+                  hrc2$af         > common_maf, 
+                  ( 1 - hrc2$af ) > common_maf )
+  rare_comp <- !diff_af & !comm
+  message2( sum(rare_comp), "/", NROW(hrc2), " SNPs (", 
+            round( 100 * sum(rare_comp) / NROW(hrc2), 2 ), 
+            "%) have similar AFs and MAF <= ", common_maf, ": no action" )
+  
+  # Report non-palindromic common compatible SNPs
+  pal <- ( hrc2$alt=="A" & hrc2$ref=="T" ) | 
+    ( hrc2$alt=="T" & hrc2$ref=="A" ) | 
+    ( hrc2$alt=="C" & hrc2$ref=="G" ) | 
+    ( hrc2$alt=="G" & hrc2$ref=="C" )
+  ncc <- !pal & comm & !diff_af
+  message2( sum(ncc), "/", NROW(hrc2), " SNPs (", 
+            round( 100 * sum(ncc) / NROW(hrc2), 2 ), 
+            "%) have similar AFs, MAF > ", common_maf, 
+            ", and are non-palindromic: no action" )
+  
+  # Prepare to report palindromic common compatible SNPs
+  pcc <- pal & comm & !diff_af
+  base_msg <- paste0( sum(pcc), "/", NROW(hrc2), " SNPs (", 
+                      round( 100 * sum(pcc) / NROW(hrc2), 2 ), 
+                      "%) have similar AFs, MAF > ", common_maf, 
+                      ", and are palindromic: " )
+  
+  # If using DENTIST, keep common palindromic SNPs
+  # If not using DENTIST, remove common palindromic SNPs
+  dentist <- TRUE
+  if(dentist){
+    message2( base_msg, "no action (DENTIST will be used for further SNP QC)")
+    bad_snps <- diff_af
+  }else{
+    message2( base_msg, "flagging for removal")
+    bad_snps <- diff_af | pcc
+  }
+  
+  # Remove flagged SNPs
+  message2("Remove flagged SNPs")
+  gw3  <- gw2[  !bad_snps , ]
+  hrc3 <- hrc2[ !bad_snps , ]
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Format and write outputs
+  #-----------------------------------------------------------------------------
+  
+  # Dump GWAS summary statistics
+  message2("Dump GWAS summary statistics")
+  gw_outfile <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  fwrite( x=gw3, file=gw_outfile, sep="\t" )
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Done
+  #-----------------------------------------------------------------------------
 }
 
 
@@ -360,7 +398,7 @@ format_gwas <- function( maindir          = "~/cojo",
 #   define_loci_clump: Clump SNPs, add buffer, merge overlapping regions
 #-------------------------------------------------------------------------------
 
-define_loci_clump <- function(maindir){
+define_loci_clump <- function( maindir, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -369,8 +407,8 @@ define_loci_clump <- function(maindir){
   # Load libraries and sources
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
-  library(IRanges)
+  suppressMessages( library(data.table) )
+  suppressMessages( library(IRanges) )
   
   # If output file already exists, skip
   clmp_loci_file <- file.path( maindir, "loci_clumped.tsv" )
@@ -387,14 +425,15 @@ define_loci_clump <- function(maindir){
   # Set static clumping arguments
   message2("Set static clumping arguments")
   plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
-  gw_file  <- file.path( maindir, "gwas_sumstats.tsv" )
+  gw_file  <- file.path( maindir, "gwas_sumstats.qc.tsv" )
   
   
   #-----------------------------------------------------------------------------
   #   Loop through chromosomes and clump, then collate results
   #-----------------------------------------------------------------------------
   
-  for( i in 1:22 ){
+  chromosomes <- ifelse( do.test, 22, 1:22 )
+  for( i in chromosomes ){
     
     # Set per-chromosome clumping arguments
     bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", i, 
@@ -406,12 +445,13 @@ define_loci_clump <- function(maindir){
     
     # If the output file already exists, skip
     if( file.exists(outfile) ){
-      message2( "Output file for chromosome: ", i, " already exists, skipping" )
+      message2( "Output file for chromosome ", i, " already exists, skipping" )
       next
+    }else{
+      message2( "Clumping chromosome: ", i )
     }
     
     # Run clumping
-    message2( "Clumping chromosome: ", i )
     cmd <- paste( plink, 
                   "--bfile",          bed_file, 
                   "--clump",          gw_file,
@@ -420,7 +460,7 @@ define_loci_clump <- function(maindir){
                   "--clump-r2",       0.1,
                   "--clump-kb",       3000,
                   "--out",            out_pre )
-    system(cmd)
+    system( command=cmd, intern=TRUE )
   }
   
   # Collate results across chromosomes
@@ -457,9 +497,9 @@ define_loci_clump <- function(maindir){
     # Find position of each SNP in the GWAS sumstats
     pos <- gw$bp[ match( ldf4, gw$SNP ) ]
     
-    # Assign lo.pos and hi.pos, including 1Mb buffer
-    clmp$lo.pos[i] <- min(pos) - 1e6
-    clmp$hi.pos[i] <- max(pos) + 1e6
+    # Assign lo.pos and hi.pos, including 500kb buffer
+    clmp$lo.pos[i] <- min(pos) - 5e5
+    clmp$hi.pos[i] <- max(pos) + 5e5
     if( clmp$lo.pos[i] < 1 ) clmp$lo.pos[i] <- 1
   }
   
@@ -489,6 +529,127 @@ define_loci_clump <- function(maindir){
 
 
 #-------------------------------------------------------------------------------
+#   dentist:           Run DENTIST and remove SNPs that fail
+#-------------------------------------------------------------------------------
+
+dentist <- function( maindir, do.test=FALSE ){
+  
+  #-----------------------------------------------------------------------------
+  #   Get set up
+  #-----------------------------------------------------------------------------
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressMessages( library(data.table) )
+  suppressMessages( library(parallel) )
+  
+  # Create a directory to DENTIST results
+  message2("Create a directory to DENTIST results")
+  dent_dir <- file.path( maindir, "dentist" )
+  dir.create( path=dent_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # If output file already exists, skip
+  dent_outfile <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  if( file.exists(dent_outfile) ){
+    message2("DENTIST-QC'd GWAS sumstats file already exists, skipping")
+    return()
+  }
+  
+  # Set global parameters
+  dentist_binary <- "/projects/0/prjs0817/software/DENTIST/DENTIST_1.3.0.0"
+  n_threads      <- detectCores()
+  
+  # Read in the GWAS
+  message2("Read in the GWAS")
+  gw_file <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  gw      <- fread(gw_file)
+  
+  # Write out a version of the GWAS with no chromosome and position columns
+  message2("Write out a version of the GWAS with no chromosome and position columns")
+  gcols <- setdiff( names(gw), c( "chr", "bp" ) )
+  gw2 <- gw[ , ..gcols ]
+  dent_in_ss_file <- file.path( dent_dir, "gwas_sumstats.qc.tsv" )
+  fwrite( x=gw2, file=dent_in_ss_file, sep="\t" )
+  
+  # Read in loci
+  message2("Read in loci")
+  loci_file <- file.path( maindir, "loci_clumped.tsv" )
+  loci <- fread(loci_file)
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Loop through loci
+  #-----------------------------------------------------------------------------
+  
+  locus_idx <- ifelse( do.test,
+                       seq_along(loci$chr)[ loci$chr == 22 ],
+                       seq_along(loci$chr) )
+  for( i in locus_idx ){
+    
+    # Extract locus information
+    chr        <- loci$chr[i]
+    lo         <- loci$lo.pos[i]
+    hi         <- loci$hi.pos[i]
+    
+    # If output file already exists, skip
+    out_name <- paste0( "chr", chr, "_", lo, "_", hi )
+    out_pre  <- file.path( dent_dir, out_name )
+    outfile  <- paste0( out_pre, ".DENTIST.full.txt" )
+    if( file.exists(outfile) ){
+      message2("DENTIST file already exists for ", out_name, ", skipping")
+      next
+    }else{
+      message2( "Running DENTIST on locus ", i, "/", NROW(loci), ": ",
+                out_name )
+    }
+    
+    # Extract local SNP names
+    idx  <- gw$chr == chr & gw$bp >= lo & gw$bp <= hi
+    snps <- gw$SNP[idx]
+    
+    # Write local SNPs to file
+    locus_name <- paste0( "chr", chr, "_", lo, "_", hi )
+    snp_file   <- file.path( dent_dir, paste0( locus_name, ".snplist" ) )
+    writeLines( text=snps, con=snp_file )
+    
+    # Set BED file path
+    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
+                        ".impute.plink.combined.EUR.2191.EAS.538" )
+    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    
+    # Run DENTIST
+    # message2( "Running DENTIST on locus ", i, "/", NROW(loci), ": ", outname )
+    cmd <- paste( dentist_binary,
+                  "--gwas-summary", dent_in_ss_file,
+                  "--bfile",        bed_file,
+                  "--chrID",        chr,
+                  "--extract",      snp_file,
+                  "--thread-num",   n_threads,
+                  "--out",          out_pre,
+                  "--no-missing-genotype" )
+    system( command=cmd, intern=FALSE )
+  }
+  
+  # Store SNPs that failed DENTIST
+  fail_files <- list.files( path=dent_dir, pattern=".DENTIST.short.txt$", 
+                            full.names=TRUE )
+  failed0 <- lapply( fail_files, readLines )
+  failed  <- unlist(failed0)
+  
+  # Remove SNPs that fail DENTIST
+  gw_post <- gw[ -match( failed, gw$SNP ) , ]
+  
+  # Write QC'd GWAS to file
+  fwrite( x=gw_post, file=dent_outfile, sep="\t" )
+}
+
+
+#-------------------------------------------------------------------------------
 #   run_cojo_genome:   Get independent hits across the whole genome
 #-------------------------------------------------------------------------------
 
@@ -497,7 +658,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
   # Load libraries and sources
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
+  suppressMessages( library(data.table) )
   
   # If output file already exists, skip
   jma_outfile <- file.path( maindir, "hits_genome.jma.cojo" )
@@ -510,7 +671,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
   message2("Set static COJO arguments")
   gcta_binary    <- file.path( "/projects/0/prjs0817/software/gcta/",
                                "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file      <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
+  cojo_file      <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   cojo_p         <- 5e-8
   
   # Create a directory for per-chromosome COJO outputs
@@ -564,7 +725,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
 #   run_cojo_locus:    Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_locus <- function(maindir){
+run_cojo_locus <- function( maindir, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -576,7 +737,7 @@ run_cojo_locus <- function(maindir){
   # Load libraries and sources
   # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
+  suppressMessages( library(data.table) )
   
   # If output file already exists, skip
   jma_outfile <- file.path( maindir, "hits_locus.jma.cojo" )
@@ -589,7 +750,7 @@ run_cojo_locus <- function(maindir){
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                                "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   
   # Create a directory for per-locus COJO outputs
   message2("Create a directory for per-locus COJO outputs")
@@ -598,8 +759,7 @@ run_cojo_locus <- function(maindir){
   
   # Read in the GWAS
   message2("Read in the GWAS")
-  gw_file <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
-  gw <- fread(gw_file)
+  gw <- fread(cojo_file)
   
   # Read in loci
   message2("Read in loci")
@@ -611,7 +771,10 @@ run_cojo_locus <- function(maindir){
   #   Loop through loci
   #-----------------------------------------------------------------------------
   
-  for( i in seq_along(loci$chr) ){
+  locus_idx <- ifelse( do.test,
+                       seq_along(loci$chr)[ loci$chr == 22 ],
+                       seq_along(loci$chr) )
+  for( i in locus_idx ){
     
     # Set per-locus COJO arguments
     chr      <- loci$chr[i]
@@ -631,11 +794,10 @@ run_cojo_locus <- function(maindir){
       next
     }
     
-    # Subset GWAS sumstats to the locus, write to file
-    idx <- gw$chr == chr & gw$bp >= lo & gw$bp <= hi & gw$p < 1e-3
-    gw2 <- gw[ idx , ]
+    # Write to file all SNPs in the locus
     snp_file <- sub( pattern=".jma.cojo$", replacement=".snplist", x=outfile )
-    writeLines( text=gw2$SNP, con=snp_file )
+    idx <- gw$chr == chr & gw$bp >= lo & gw$bp <= hi
+    writeLines( text=gw$SNP[idx], con=snp_file )
     
     # Run COJO
     message2( "Running COJO on locus ", i, "/", NROW(loci), ": ", outname )
@@ -646,7 +808,7 @@ run_cojo_locus <- function(maindir){
                   "--extract",   snp_file,
                   "--cojo-slct",
                   "--out",       out_pre )
-    system(cmd)
+    system( command=cmd, intern=TRUE )
   }
   
   # Collate results across chromosomes
@@ -674,7 +836,7 @@ rm_weak_hits <- function(maindir){
   # Load libraries and sources
   # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
+  suppressMessages( library(data.table) )
   
   # If output file already exists, skip
   weak_file <- file.path( maindir, "hits_locus_no_weak.jma.cojo" )
@@ -702,7 +864,7 @@ rm_weak_hits <- function(maindir){
 #   isolate_signals:   Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals <- function(maindir){
+isolate_signals <- function( maindir, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -714,13 +876,13 @@ isolate_signals <- function(maindir){
   # Load libraries and sources
   # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
+  suppressMessages( library(data.table) )
   
   # Set static COJO arguments
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   
   # Create a directory for leave-one-hit-out conditioned sumstats
   message2("Create a directory for leave-one-hit-out conditioned sumstats")
@@ -729,30 +891,38 @@ isolate_signals <- function(maindir){
   
   # Read in the GWAS
   message2("Read in the GWAS")
-  gw_file <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
-  gw <- fread(gw_file)
+  gw <- fread(cojo_file)
   
   # Read in loci
   message2("Read in loci")
   loci_file <- file.path( maindir, "loci_clumped.tsv" )
   loci <- fread(loci_file)
   
+  # Read in (marginally significant) COJO hits
+  all_hits_file <- file.path( maindir, "hits_locus_no_weak.jma.cojo" )
+  all_hits <- fread(all_hits_file)
+  
   
   #-----------------------------------------------------------------------------
   #   Loop through loci
   #-----------------------------------------------------------------------------
   
-  for( i in seq_along(loci$chr) ){
+  locus_idx <- ifelse( do.test,
+                       seq_along(loci$chr)[ loci$chr == 22 ],
+                       seq_along(loci$chr) )
+  for( i in locus_idx ){
     
-    # Read in local COJO hits
+    # Subset to local COJO hits
     chr        <- loci$chr[i]
     lo         <- loci$lo.pos[i]
     hi         <- loci$hi.pos[i]
-    locus_name <- paste0( "chr", chr, "_", lo, "_", hi )
+    idx        <- all_hits$Chr == chr & all_hits$bp >= lo & all_hits$bp <= hi
+    hits       <- all_hits[ idx , ]
+    
+    # Find the file containing all SNPs in the locus
     hits_dir   <- file.path( maindir, "hits_locus" )
+    locus_name <- paste0( "chr", chr, "_", lo, "_", hi )
     snp_file   <- file.path( hits_dir, paste0( locus_name, ".snplist" ) )
-    hits_file  <- file.path( hits_dir, paste0( locus_name, ".jma.cojo" ) )
-    hits       <- fread(hits_file)
     
     # Set BED file path
     bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
@@ -801,7 +971,7 @@ isolate_signals <- function(maindir){
                       "--extract",   snp_file,
                       "--cojo-cond", loho_snp_file,
                       "--out",       out_pre )
-        system(cmd)
+        system( command=cmd, intern=TRUE )
       }
     }
   }
@@ -824,7 +994,7 @@ ld_for_hits <- function(maindir){
   # Load libraries and sources
   # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
+  suppressMessages( library(data.table) )
   
   # Create a directory for LD
   message2("Create a directory for LD")
@@ -888,7 +1058,87 @@ ld_for_hits <- function(maindir){
                   "--ld-window",      99999,
                   "--ld-window-kb",   99999,
                   "--out",            out_pre )
-    system(cmd)
+    system( command=cmd, intern=TRUE )
+  }
+}
+
+
+#-------------------------------------------------------------------------------
+#   credible_sets:     Compute credible sets for each (conditioned) hit
+#-------------------------------------------------------------------------------
+
+credible_sets <- function(maindir){
+  
+  #-----------------------------------------------------------------------------
+  #   Get set up
+  #-----------------------------------------------------------------------------
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressMessages( library(data.table) )
+  suppressMessages( library(coloc) )
+  
+  # Create a directory to house credible sets
+  cs_dir <- file.path( maindir, "cred_sets" )
+  dir.create( path=cs_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # If output files already exist, skip
+  
+  # Find all conditioned sumstats files
+  loho_dir  <- file.path( maindir, "loho_conditioned_sumstats" )
+  cma_names <- list.files( path=loho_dir, pattern=".cma.cojo$" )
+  cma_files <- file.path( loho_dir, cma_names )
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Loop through conditioned sumstats files
+  #-----------------------------------------------------------------------------
+  
+  for( i in seq_along(cma_names) ){
+    
+    # If output file already exists, skip
+    out_name <- sub( pattern=".cma.cojo$", replacement="", x=cma_names[i] )
+    out_pre  <- file.path( cs_dir, out_name )
+    outfile  <- paste0( out_pre, ".cs" )
+    if( file.exists(outfile) ){
+      message2("Credible set file already exists for ", out_name, ", skipping")
+      next
+    }else{
+      message2( "Computing credible set for locus ", i, "/", 
+                length(cma_names), ": ", out_name )
+    }
+    
+    # Read in conditioned sumstats
+    ss <- fread( cma_files[i] )
+    
+    # Compute credible set
+    dataset <- list( snp     = ss$SNP, 
+                     beta    = ss$b, 
+                     varbeta = ss$se^2, 
+                     N       = median(ss$N),
+                     s       = 0.5,
+                     type    = "cc" )
+    cs <- finemap.abf( dataset=dataset )
+    
+    # Add PIP to the conditioned sumstats
+    ss$pip <- cs$SNP.PP[ -NROW(cs) ]
+    
+    # Subset to the 95% CS
+    ss2 <- ss[ order(-ss$pip) , ]
+    ss2$sum <- cumsum(ss2$pip)
+    idx <- which( ss2$sum >= 0.95 )
+    if( length(idx) == 0 ){
+      ss3 <- ss2
+    }else{
+      ss3 <- head( ss2, idx[1] )
+    }
+    
+    # Write sumstats for credible set SNPs to file
+    fwrite( x=ss3, file=outfile, sep="\t" )
   }
 }
 
@@ -909,9 +1159,9 @@ lz_plot <- function( maindir, cond.or.uncond ){
   # Load libraries
   # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
   message2("Load libraries and sources")
-  library(data.table)
-  library(locuszoomr)
-  library(EnsDb.Hsapiens.v75)
+  suppressMessages( library(data.table) )
+  suppressMessages( library(locuszoomr) )
+  suppressMessages( library(EnsDb.Hsapiens.v75) )
   
   # Create a directory to house LZPs
   message2("Create a directory to house LZPs")
@@ -925,7 +1175,7 @@ lz_plot <- function( maindir, cond.or.uncond ){
   # Read in the GWAS
   if( cond.or.uncond == "uncond" ){
     message2("Read in the GWAS")
-    gw_file <- file.path( maindir, "gwas_sumstats_1e3.tsv" )
+    gw_file <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
     gw <- fread(gw_file)
   }
   
@@ -939,7 +1189,7 @@ lz_plot <- function( maindir, cond.or.uncond ){
   #   Loop through conditioned sumstats files (even if we want unconditioned)
   #-----------------------------------------------------------------------------
   
-  for( i in seq_along(ss_cond_files[1:10]) ){
+  for( i in seq_along(ss_cond_files) ){
     
     #-----------------------------------------------------------------------------
     #   Check if output exists, extract locus info from file name
@@ -1016,88 +1266,8 @@ lz_plot <- function( maindir, cond.or.uncond ){
     
     # Make LZP
     jpeg( filename=lzp_out, width=480*4, height=480*4, res=75*4 )
-    locus_plot( loc, border=TRUE )
+    locus_plot( loc, border=TRUE, filter_gene_biotype="protein_coding" )
     dev.off()
-  }
-}
-
-
-#-------------------------------------------------------------------------------
-#   credible_sets:     Compute credible sets for each (conditioned) hit
-#-------------------------------------------------------------------------------
-
-credible_sets <- function(maindir){
-  
-  #-----------------------------------------------------------------------------
-  #   Get set up
-  #-----------------------------------------------------------------------------
-  
-  # message2: Just like message, but with the date and a gap pasted in
-  message2 <- function(...) message( date(), "     ", ...)
-  
-  # Load libraries
-  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
-  message2("Load libraries and sources")
-  library(data.table)
-  library(coloc)
-  
-  # Create a directory to house credible sets
-  cs_dir <- file.path( maindir, "cred_sets" )
-  dir.create( path=cs_dir, showWarnings=FALSE, recursive=TRUE )
-  
-  # If output files already exist, skip
-  
-  # Find all conditioned sumstats files
-  loho_dir  <- file.path( maindir, "loho_conditioned_sumstats" )
-  cma_names <- list.files( path=loho_dir, pattern=".cma.cojo$" )
-  cma_files <- file.path( loho_dir, cma_names )
-  
-  
-  #-----------------------------------------------------------------------------
-  #   Loop through conditioned sumstats files
-  #-----------------------------------------------------------------------------
-  
-  for( i in seq_along(cma_names) ){
-    
-    # If output file already exists, skip
-    out_name <- sub( pattern=".cma.cojo$", replacement="", x=cma_names[i] )
-    out_pre  <- file.path( cs_dir, out_name )
-    outfile  <- paste0( out_pre, ".cs" )
-    if( file.exists(outfile) ){
-      message2("Credible set file already exists for ", out_name, ", skipping")
-      next
-    }else{
-      message2( "Computing credible set for locus ", i, "/", 
-                length(cma_names), ": ", out_name )
-    }
-    
-    # Read in conditioned sumstats
-    ss <- fread( cma_files[i] )
-    
-    # Compute credible set
-    dataset <- list( snp     = ss$SNP, 
-                     beta    = ss$b, 
-                     varbeta = ss$se^2, 
-                     N       = median(ss$N),
-                     s       = 0.5,
-                     type    = "cc" )
-    cs <- finemap.abf( dataset=dataset )
-    
-    # Add PIP to the conditioned sumstats
-    ss$pip <- cs$SNP.PP[ -NROW(cs) ]
-    
-    # Subset to the 95% CS
-    ss2 <- ss[ order(-ss$pip) , ]
-    ss2$sum <- cumsum(ss2$pip)
-    idx <- which( ss2$sum >= 0.95 )
-    if( length(idx) == 0 ){
-      ss3 <- ss2
-    }else{
-      ss3 <- head( ss2, idx[1] )
-    }
-    
-    # Write sumstats for credible set SNPs to file
-    fwrite( x=ss3, file=outfile, sep="\t" )
   }
 }
 
