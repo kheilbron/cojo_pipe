@@ -115,10 +115,10 @@ format_gwas <- function( maindir          = "~/cojo",
   if( ld_panel == "hrc" ){
     rare.or.common.snps <- "rare"
     if( rare.or.common.snps == "common"){
-      message2("Read in HRC SNPs with EUR MAF >= 1%")
+      message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
       hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
     }else if( rare.or.common.snps == "rare"){
-      message2("Read in HRC SNPs with EUR MAC >= 10")
+      message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
       hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
     }else{
       stop("rare.or.common must be 'rare' or 'common'")
@@ -432,7 +432,8 @@ define_loci_clump <- function( maindir, do.test=FALSE ){
   #   Loop through chromosomes and clump, then collate results
   #-----------------------------------------------------------------------------
   
-  chromosomes <- ifelse( do.test, 22, 1:22 )
+  chromosomes <- 1:22
+  if(do.test) chromosomes <- 22
   for( i in chromosomes ){
     
     # Set per-chromosome clumping arguments
@@ -585,9 +586,8 @@ dentist <- function( maindir, do.test=FALSE ){
   #   Loop through loci
   #-----------------------------------------------------------------------------
   
-  locus_idx <- ifelse( do.test,
-                       seq_along(loci$chr)[ loci$chr == 22 ],
-                       seq_along(loci$chr) )
+  locus_idx <- seq_along(loci$chr)
+  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
   for( i in locus_idx ){
     
     # Extract locus information
@@ -749,7 +749,7 @@ run_cojo_locus <- function( maindir, do.test=FALSE ){
   # Set static COJO arguments
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
-                               "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
+                            "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   
   # Create a directory for per-locus COJO outputs
@@ -771,9 +771,8 @@ run_cojo_locus <- function( maindir, do.test=FALSE ){
   #   Loop through loci
   #-----------------------------------------------------------------------------
   
-  locus_idx <- ifelse( do.test,
-                       seq_along(loci$chr)[ loci$chr == 22 ],
-                       seq_along(loci$chr) )
+  locus_idx <- seq_along(loci$chr)
+  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
   for( i in locus_idx ){
     
     # Set per-locus COJO arguments
@@ -817,7 +816,7 @@ run_cojo_locus <- function( maindir, do.test=FALSE ){
   jma0 <- lapply( X=jma_files, FUN=fread )
   jma  <- do.call( rbind, jma0 )
   jma  <- jma[ order( jma$Chr, jma$bp ) , ]
-
+  
   # Write results to file
   message2("Write results to file")
   fwrite( x=jma, file=jma_outfile, sep="\t" )
@@ -907,9 +906,8 @@ isolate_signals <- function( maindir, do.test=FALSE ){
   #   Loop through loci
   #-----------------------------------------------------------------------------
   
-  locus_idx <- ifelse( do.test,
-                       seq_along(loci$chr)[ loci$chr == 22 ],
-                       seq_along(loci$chr) )
+  locus_idx <- seq_along(loci$chr)
+  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
   for( i in locus_idx ){
     
     # Subset to local COJO hits
