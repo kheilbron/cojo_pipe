@@ -5,10 +5,27 @@
 #   simple_functions
 #-------------------------------------------------------------------------------
 
+# ensure_finished_jobs: Make sure all qsub jobs finish running before proceeding
 # message2:             Just like message, but with the date and a gap pasted in
 # message_header:       Nicely-formatted text to break up your log files into 
 #                       readable chunks
 # n_eff:                Get the effective sample size of a case-control GWAS
+# p_to_z:               Convert a P value into a z-score
+
+# ensure_finished_jobs: Make sure all qsub jobs finish running before proceeding
+ensure_finished_jobs <- function(identifier){
+  
+  external.call <- paste0( "squeue | grep ", identifier, " | wc -l" )
+  running.jobs  <- as.numeric( system( external.call, intern=TRUE ) ) 
+  total_sleep   <- 0
+  while( running.jobs > 0){
+    message( "Waited for ", total_sleep, " minutes, there are still ",
+             running.jobs, " jobs running")
+    Sys.sleep(60)
+    total_sleep <- total_sleep + 1
+    running.jobs <- as.numeric( system( external.call, intern=TRUE ) )
+  }
+}
 
 # message2: Just like message, but with the date and a gap pasted in
 message2 <- function(...) message( date(), "     ", ...)
@@ -25,6 +42,24 @@ message_header <- function(...){
 n_eff <- function( n.cases, n.controls ){
   n.eff <- 4 / ( (1/n.cases) + (1/n.controls) )
   round(n.eff)
+}
+
+# p_to_z: Convert a P value into a z-score
+p_to_z <- function( p, direction=NULL, limit=.Machine$double.xmin, log.p=FALSE ){
+  
+  # Set P value lower limit to avoid Inf/-Inf
+  if( !is.null( limit ) )  p[ which( p < limit ) ] <- limit
+  
+  # Get z
+  if(log.p){
+    z <- -qnorm( p - log(2), log.p=TRUE )
+  }else{
+    z <- -qnorm(p/2)
+  }
+  
+  # Correct sign, return
+  if ( !is.null( direction) )  z <-  z * sign(direction)
+  z
 }
 
 
@@ -190,6 +225,13 @@ format_gwas <- function( maindir          = "~/cojo",
   if( "or" %in% names(gw) ){
     message2("Convert ORs to logORs")
     gw$b <- log(gw$or)
+  }
+  
+  # Replace SEs to be compatible with betas and P values?
+  replace_se <- TRUE
+  if(replace_se){
+    new_se <- gw$b / p_to_z( p=gw$p, direction=gw$b )
+    gw$se <- ifelse( is.na(new_se), gw$se, new_se )
   }
   
   
@@ -722,10 +764,10 @@ run_cojo_genome <- function( maindir, r=0.9 ){
 
 
 #-------------------------------------------------------------------------------
-#   run_cojo_locus:    Get independent hits in each clumping-defined locus
+#   run_cojo_local:    Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_locus <- function( maindir, do.test=FALSE ){
+run_cojo_local <- function( maindir, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -824,6 +866,142 @@ run_cojo_locus <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
+#   run_cojo_cluster:  Get independent hits in each clumping-defined locus
+#-------------------------------------------------------------------------------
+
+run_cojo_cluster <- function( maindir, do.test=FALSE ){
+  
+  #-----------------------------------------------------------------------------
+  #   Get set up
+  #-----------------------------------------------------------------------------
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries and sources
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressMessages( library(data.table) )
+  
+  # If output file already exists, skip
+  jma_outfile <- file.path( maindir, "hits_locus.jma.cojo" )
+  if( file.exists(jma_outfile) ){
+    message2("Locus-agnostic hits file already exists, skipping")
+    return()
+  }
+  
+  # Set static COJO arguments
+  message2("Set static COJO arguments")
+  gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
+                            "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  
+  # Create a directory for per-locus COJO outputs
+  message2("Create a directory for per-locus COJO outputs")
+  hits_dir <- file.path( maindir, "hits_locus" )
+  dir.create( hits_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Read in the GWAS
+  message2("Read in the GWAS")
+  gw <- fread(cojo_file)
+  
+  # Read in loci
+  message2("Read in loci")
+  loci_file <- file.path( maindir, "loci_clumped.tsv" )
+  loci <- fread(loci_file)
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Loop through loci
+  #-----------------------------------------------------------------------------
+  
+  # Create a job identifier
+  job.id <- paste0( "c", sample( x=1:999, size=1 ) )
+  
+  # Make a log directory
+  logdir <- file.path( maindir, "log", "run_cojo" )
+  dir.create( path=logdir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Loop through loci
+  locus_idx <- seq_along(loci$chr)
+  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
+  for( i in locus_idx ){
+    
+    # Set per-locus COJO arguments
+    chr      <- loci$chr[i]
+    lo       <- loci$lo.pos[i]
+    hi       <- loci$hi.pos[i]
+    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
+                        ".impute.plink.combined.EUR.2191.EAS.538" )
+    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    outname  <- paste0( "chr", chr, "_", lo, "_", hi )
+    out_pre  <- file.path( hits_dir, outname )
+    outfile  <- paste0( out_pre, ".jma.cojo" )
+    
+    # If the output file already exists, skip
+    if( file.exists(outfile) ){
+      message2( "Output file for: ", outname, " already exists, skipping" )
+      next
+    }
+    
+    # Write to file all SNPs in the locus
+    snp_file <- sub( pattern=".jma.cojo$", replacement=".snplist", x=outfile )
+    idx <- gw$chr == chr & gw$bp >= lo & gw$bp <= hi
+    writeLines( text=gw$SNP[idx], con=snp_file )
+    
+    # Create job name and log file name
+    jobname <- paste0( job.id, ".", i )
+    logfile <- file.path( logdir, paste0( outname, ".log" ) )
+    
+    # Run COJO
+    message2( "Running COJO on locus ", i, "/", NROW(loci), ": ", outname )
+    cmd <- paste( gcta_binary,
+                  "--bfile",     bed_file,
+                  "--cojo-file", cojo_file,
+                  "--chr",       chr,
+                  "--extract",   snp_file,
+                  "--cojo-slct",
+                  "--out",       out_pre )
+    cmd2 <- paste0( '"', cmd, '"' )
+    cmd3 <- paste( "sbatch",
+                   "-J", jobname,
+                   "-o", logfile,
+                   "-e", logfile,
+                   "/projects/0/prjs0817/repos/cojo_pipe/b_run_cojo.sh",
+                   cmd2 )
+    system( command=cmd3, intern=FALSE )
+  }
+  
+  # Wait until all jobs are finished before proceeding
+  message2("Wait until all jobs are finished before proceeding")
+  ensure_finished_jobs(job.id)
+  
+  # Check that all jobs completed successfully
+  message2("Check that all jobs completed successfully")
+  jma_files <- list.files( path=hits_dir, pattern=".jma.cojo$", full.names=TRUE )
+  if( length(jma_files) != length(locus_idx) ){
+    all_outnames <- paste0( "chr", loci$chr, "_", loci$lo.pos, "_", 
+                            loci$hi.pos, ".jma.cojo" )
+    all_outfiles <- file.path( hits_dir, all_outnames )
+    outnames_miss <- all_outnames[ -match( jma_files, all_outfiles ) ]
+    stop( "The following jobs failed: ", paste( outnames_miss, collapse=", " ) )
+  }
+  
+  # Collate results across loci
+  message2("Collate results across loci")
+  jma_files <- list.files( path=hits_dir, pattern=".jma.cojo$", full.names=TRUE )
+  jma0 <- lapply( X=jma_files, FUN=fread )
+  jma  <- do.call( rbind, jma0 )
+  jma  <- jma[ order( jma$Chr, jma$bp ) , ]
+  
+  # Write results to file
+  message2("Write results to file")
+  fwrite( x=jma, file=jma_outfile, sep="\t" )
+}
+
+
+#-------------------------------------------------------------------------------
 #   rm_weak_hits:      Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
@@ -860,10 +1038,10 @@ rm_weak_hits <- function(maindir){
 
 
 #-------------------------------------------------------------------------------
-#   isolate_signals:   Extract conditioned sumstats for each independent hit
+#   isolate_signals_local:   Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals <- function( maindir, do.test=FALSE ){
+isolate_signals_local <- function( maindir, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -974,6 +1152,171 @@ isolate_signals <- function( maindir, do.test=FALSE ){
     }
   }
 }
+
+
+#-------------------------------------------------------------------------------
+#   isolate_signals_cluster: Extract conditioned sumstats for each independent hit
+#-------------------------------------------------------------------------------
+
+isolate_signals_cluster <- function( maindir, do.test=FALSE ){
+  
+  #-----------------------------------------------------------------------------
+  #   Get set up
+  #-----------------------------------------------------------------------------
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries and sources
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressMessages( library(data.table) )
+  
+  # Set static COJO arguments
+  message2("Set static COJO arguments")
+  gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
+                            "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  
+  # Create a directory for leave-one-hit-out conditioned sumstats
+  message2("Create a directory for leave-one-hit-out conditioned sumstats")
+  loho_dir <- file.path( maindir, "loho_conditioned_sumstats" )
+  dir.create( loho_dir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Read in the GWAS
+  message2("Read in the GWAS")
+  gw <- fread(cojo_file)
+  
+  # Read in loci
+  message2("Read in loci")
+  loci_file <- file.path( maindir, "loci_clumped.tsv" )
+  loci <- fread(loci_file)
+  
+  # Read in (marginally significant) COJO hits
+  all_hits_file <- file.path( maindir, "hits_locus_no_weak.jma.cojo" )
+  all_hits <- fread(all_hits_file)
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Loop through hits
+  #-----------------------------------------------------------------------------
+  
+  # Create a job identifier
+  job.id <- paste0( "i", sample( x=1:999, size=1 ) )
+  
+  # Make a log directory
+  logdir <- file.path( maindir, "log", "isolate_signals" )
+  dir.create( path=logdir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Loop through hits
+  hits_idx <- seq_along(all_hits$SNP)
+  if(do.test) hits_idx <- hits_idx[ all_hits$Chr == 22 ]
+  for( i in hits_idx ){
+    
+    #-----------------------------------------------------------------------------
+    #   Check whether the output file already exists
+    #-----------------------------------------------------------------------------
+    
+    # Subset to focal hit
+    hit <- all_hits[i,]
+    
+    # Find the corresponding locus
+    locus <- loci[ loci$chr    == hit$Chr & 
+                   loci$lo.pos <= hit$bp &
+                   loci$hi.pos >= hit$bp , ]
+    chr        <- locus$chr
+    lo         <- locus$lo.pos
+    hi         <- locus$hi.pos
+    locus_name <- paste0( "chr", chr, "_", lo, "_", hi )
+    
+    # Find the hit number
+    hits <- all_hits[ all_hits$Chr == chr & 
+                      all_hits$bp >= lo & 
+                      all_hits$bp <= hi , ]
+    hit_num <- which( hits$SNP == hit$SNP )
+    
+    # If the output file already exists, skip
+    outname <- paste0( locus_name, "_", hit_num, "_", hit$SNP )
+    out_pre <- file.path( loho_dir, outname )
+    outfile <- paste0( out_pre, ".cma.cojo" )
+    if( file.exists(outfile) ){
+      message2( "Output file for: ", outname, " already exists, skipping" )
+      next
+    }else{
+      message2( "Creating conditioned sumstats for hit ", 
+                i, "/", NROW(all_hits), ": ", outname )
+    }
+    
+    
+    #-----------------------------------------------------------------------------
+    #   Write sumstats or run COJO depending on number of hits in the locus
+    #-----------------------------------------------------------------------------
+    
+    # Find the file containing all SNPs in the locus
+    hits_dir   <- file.path( maindir, "hits_locus" )
+    snp_file   <- file.path( hits_dir, paste0( locus_name, ".snplist" ) )
+    
+    # Set BED file path
+    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
+                        ".impute.plink.combined.EUR.2191.EAS.538" )
+    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    
+    # If there is only one hit, write locus GWAS sumstats
+    # If there are multiple hits, sub-loop through hits and run LOHO COJO
+    if( NROW(hits) == 1 ){
+      
+      # Subset GWAS sumstats to the locus, write to file
+      idx <- gw$chr == chr & gw$bp >= lo & gw$bp <= hi
+      gw2 <- gw[ idx , ]
+      fwrite( x=gw2, file=outfile, sep="\t" )
+      
+    }else{
+      
+      # Write a file containing all hits in the locus except the focal hit
+      loho_snps     <- setdiff( hits$SNP, hit$SNP )
+      loho_snp_file <- file.path( loho_dir, paste0( outname, ".txt" ) )
+      writeLines( text=loho_snps, con=loho_snp_file )
+      
+      # Create job name and log file name
+      jobname <- paste0( job.id, ".", i )
+      logfile <- file.path( logdir, paste0( outname, ".log" ) )
+      
+      # Re-run COJO conditioning on the LOHO SNPs
+      cmd <- paste( gcta_binary,
+                    "--bfile",     bed_file,
+                    "--cojo-file", cojo_file,
+                    "--chr",       chr,
+                    "--extract",   snp_file,
+                    "--cojo-cond", loho_snp_file,
+                    "--out",       out_pre )
+      cmd2 <- paste0( '"', cmd, '"' )
+      cmd3 <- paste( "sbatch",
+                     "-J", jobname,
+                     "-o", logfile,
+                     "-e", logfile,
+                     "/projects/0/prjs0817/repos/cojo_pipe/c_isolate_signals.sh",
+                     cmd2 )
+      system( command=cmd3, intern=FALSE )
+    }
+  }
+  
+  # Wait until all jobs are finished before proceeding
+  message2("Wait until all jobs are finished before proceeding")
+  ensure_finished_jobs(job.id)
+  
+  # Check that all jobs completed successfully
+  message2("Check that all jobs completed successfully")
+  cma_files <- list.files( path=loho_dir, pattern=".cma.cojo$", full.names=TRUE )
+  if( length(cma_files) != length(hits_idx) ){
+    pattern <- ".*chr[[:digit:]]+_[[:digit:]]+_[[:digit:]]+_[[:digit:]]+_(.*).cma.cojo"
+    cma_snps <- sub( pattern=pattern, replacement="\\1", x=cma_files )
+    snps_miss <- setdiff( all_hits$SNP, cma_snps )
+    stop( "The following hits did not complete successfully: ",
+          paste( snps_miss, collapse=", " ) )
+  }
+}
+
 
 
 #-------------------------------------------------------------------------------
@@ -1096,6 +1439,7 @@ credible_sets <- function(maindir){
   #   Loop through conditioned sumstats files
   #-----------------------------------------------------------------------------
   
+  cs_loci0 <- list()
   for( i in seq_along(cma_names) ){
     
     # If output file already exists, skip
@@ -1112,6 +1456,17 @@ credible_sets <- function(maindir){
     
     # Read in conditioned sumstats
     ss <- fread( cma_files[i] )
+    
+    # If sumstats have been conditioned, put into the unconditioned format
+    if( "pC" %in% names(ss) ){
+      ss$b <- ss$se <- ss$p <- NULL
+      names(ss)[ names(ss) == "bC" ]    <- "b"
+      names(ss)[ names(ss) == "bC_se" ] <- "se"
+      names(ss)[ names(ss) == "pC" ]    <- "p"
+      names(ss)[ names(ss) == "n" ]     <- "N"
+      names(ss)[ names(ss) == "Chr" ]   <- "chr"
+      ss <- ss[ !is.na(ss$b) , ]
+    }
     
     # Compute credible set
     dataset <- list( snp     = ss$SNP, 
@@ -1137,7 +1492,19 @@ credible_sets <- function(maindir){
     
     # Write sumstats for credible set SNPs to file
     fwrite( x=ss3, file=outfile, sep="\t" )
+    
+    # Populate the list of CS-based locus boundaries
+    chr <- unique(ss3$chr)
+    lo  <- min(ss3$bp) - 5e5
+    hi  <- max(ss3$bp) + 5e5
+    cs_loci0[[i]] <- data.table( hit=out_name, chr=chr, lo=lo, hi=hi )
   }
+  
+  # Write credible set-based loci to file
+  message2("Write credible set-based loci to file")
+  cs_loci <- do.call( rbind, cs_loci0 )
+  cs_loci_file <- file.path( maindir, "loci_cs.tsv" )
+  fwrite( x=cs_loci, file=cs_loci_file, sep="\t" )
 }
 
 
@@ -1255,12 +1622,13 @@ lz_plot <- function( maindir, cond.or.uncond ){
     ss$r2 <- ld$R2[ match( ss$SNP, ld$SNP_B ) ]
     
     # Put sumstats into LZP format
-    loc <- locus( data  = ss, 
-                  chrom = "chr", seqname   = ss$chr[1], 
-                  pos   = "bp",  xrange    = c( as.integer(loc_start), 
-                                                as.integer(loc_end) ),
-                  p     = "p",   ens_db    = "EnsDb.Hsapiens.v75", 
-                  LD    = "r2",  index_snp = snp )
+    loc <- suppressMessages(
+      locus( data  = ss, 
+             chrom = "chr", seqname   = ss$chr[1], 
+             pos   = "bp",  xrange    = c( as.integer(loc_start), 
+                                           as.integer(loc_end) ),
+             p     = "p",   ens_db    = "EnsDb.Hsapiens.v75", 
+             LD    = "r2",  index_snp = snp ) )
     
     # Make LZP
     jpeg( filename=lzp_out, width=480*4, height=480*4, res=75*4 )
