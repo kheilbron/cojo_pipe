@@ -64,7 +64,7 @@ p_to_z <- function( p, direction=NULL, limit=.Machine$double.xmin, log.p=FALSE )
 
 
 #-------------------------------------------------------------------------------
-#   check_inputs:      Check validity of inputs
+#   check_inputs:            Check validity of inputs
 #-------------------------------------------------------------------------------
 
 check_inputs <- function(){
@@ -73,7 +73,7 @@ check_inputs <- function(){
 
 
 #-------------------------------------------------------------------------------
-#   format_gwas:       Write GWAS sumstats in COJO format
+#   format_gwas:             Write GWAS sumstats in COJO format
 #-------------------------------------------------------------------------------
 
 format_gwas <- function( maindir          = "~/cojo",
@@ -234,6 +234,9 @@ format_gwas <- function( maindir          = "~/cojo",
     gw$se <- ifelse( is.na(new_se), gw$se, new_se )
   }
   
+  # Sort by chromosome and position
+  gw <- gw[ order( gw$chr, gw$bp ) , ]
+  
   
   #-----------------------------------------------------------------------------
   #   Harmonize GWAS and reference panel alleles
@@ -308,7 +311,7 @@ format_gwas <- function( maindir          = "~/cojo",
 
 
 #-------------------------------------------------------------------------------
-#   qc_gwas:       Write GWAS sumstats in COJO format
+#   qc_gwas:                 Write GWAS sumstats in COJO format
 #-------------------------------------------------------------------------------
 
 qc_gwas <- function( maindir, ld_panel ){
@@ -437,7 +440,7 @@ qc_gwas <- function( maindir, ld_panel ){
 
 
 #-------------------------------------------------------------------------------
-#   define_loci_clump: Clump SNPs, add buffer, merge overlapping regions
+#   define_loci_clump:       Clump SNPs, add buffer, merge overlapping regions
 #-------------------------------------------------------------------------------
 
 define_loci_clump <- function( maindir, do.test=FALSE ){
@@ -572,7 +575,7 @@ define_loci_clump <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
-#   dentist:           Run DENTIST and remove SNPs that fail
+#   dentist:                 Run DENTIST and remove SNPs that fail
 #-------------------------------------------------------------------------------
 
 dentist <- function( maindir, do.test=FALSE ){
@@ -692,7 +695,7 @@ dentist <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
-#   run_cojo_genome:   Get independent hits across the whole genome
+#   run_cojo_genome:         Get independent hits across the whole genome
 #-------------------------------------------------------------------------------
 
 run_cojo_genome <- function( maindir, r=0.9 ){
@@ -764,7 +767,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
 
 
 #-------------------------------------------------------------------------------
-#   run_cojo_local:    Get independent hits in each clumping-defined locus
+#   run_cojo_local:          Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
 run_cojo_local <- function( maindir, do.test=FALSE ){
@@ -866,7 +869,7 @@ run_cojo_local <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
-#   run_cojo_cluster:  Get independent hits in each clumping-defined locus
+#   run_cojo_cluster:        Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
 run_cojo_cluster <- function( maindir, do.test=FALSE ){
@@ -1002,7 +1005,7 @@ run_cojo_cluster <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
-#   rm_weak_hits:      Get independent hits in each clumping-defined locus
+#   rm_weak_hits:            Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
 rm_weak_hits <- function(maindir){
@@ -1320,7 +1323,7 @@ isolate_signals_cluster <- function( maindir, do.test=FALSE ){
 
 
 #-------------------------------------------------------------------------------
-#   ld_for_hits:         Compute LD between hits and the rest of the locus
+#   ld_for_hits:             Compute LD between hits and the rest of the locus
 #-------------------------------------------------------------------------------
 
 ld_for_hits <- function(maindir){
@@ -1405,7 +1408,7 @@ ld_for_hits <- function(maindir){
 
 
 #-------------------------------------------------------------------------------
-#   credible_sets:     Compute credible sets for each (conditioned) hit
+#   credible_sets:           Compute credible sets for each (conditioned) hit
 #-------------------------------------------------------------------------------
 
 credible_sets <- function(maindir){
@@ -1439,7 +1442,6 @@ credible_sets <- function(maindir){
   #   Loop through conditioned sumstats files
   #-----------------------------------------------------------------------------
   
-  cs_loci0 <- list()
   for( i in seq_along(cma_names) ){
     
     # If output file already exists, skip
@@ -1492,27 +1494,104 @@ credible_sets <- function(maindir){
     
     # Write sumstats for credible set SNPs to file
     fwrite( x=ss3, file=outfile, sep="\t" )
-    
-    # Populate the list of CS-based locus boundaries
-    chr <- unique(ss3$chr)
-    lo  <- min(ss3$bp) - 5e5
-    hi  <- max(ss3$bp) + 5e5
-    cs_loci0[[i]] <- data.table( hit=out_name, chr=chr, lo=lo, hi=hi )
+  }
+}
+
+
+#-------------------------------------------------------------------------------
+#   define_loci_cs:          Assign locus boundaries based on credible sets
+#-------------------------------------------------------------------------------
+
+define_loci_cs <- function(maindir){
+  
+  #-----------------------------------------------------------------------------
+  #   Get set up
+  #-----------------------------------------------------------------------------
+  
+  # message2: Just like message, but with the date and a gap pasted in
+  message2 <- function(...) message( date(), "     ", ...)
+  
+  # Load libraries
+  # source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressMessages( library(data.table) )
+  
+  # If output files already exist, skip
+  cs_loci_file <- file.path( maindir, "loci_cs.tsv" )
+  if( file.exists(cs_loci_file) ){
+    message2("Credible set-based locus file already exists, skipping")
+    stop()
   }
   
-  # Write credible set-based loci to file
+  # Read in gene locations
+  message2("Read in gene locations")
+  genes <- fread("/projects/0/prjs0817/projects/pops/data/gene_locations.tsv")
+  
+  # Find all credible set files
+  message2("Find all credible set files")
+  cs_dir  <- file.path( maindir, "cred_sets" )
+  cs_names <- list.files( path=cs_dir, pattern=".cs$" )
+  cs_files <- file.path( cs_dir, cs_names )
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Loop through credible set files
+  #-----------------------------------------------------------------------------
+  
+  message2("Loop through credible set files")
+  cs_loci0 <- list()
+  for( i in seq_along(cs_names) ){
+    
+    # Read in CS
+    cs <- fread( cs_files[i] )
+    
+    # Extract the hit name
+    hit_name <- sub( pattern=".cs$", replacement="", x=cs_names[i])
+    
+    # Define CS-based locus boundaries
+    chr <- unique(cs$chr)
+    lo  <- min(cs$bp) - 5e5
+    hi  <- max(cs$bp) + 5e5
+    p   <- min(cs$p)
+    
+    # Find the PIP-weighted central position
+    bp_mid <- round( sum( cs$bp * cs$pip / sum(cs$pip) ) )
+    
+    # Find the nearest gene
+    genes2 <- genes[ genes$CHR == chr , ]
+    genes2$dist_start <- abs( genes2$START - bp_mid )
+    genes2$dist_stop  <- abs( genes2$END   - bp_mid )
+    genes2$min_dist   <- ifelse( genes2$dist_start < genes2$dist_stop,
+                                 genes2$dist_start,  genes2$dist_stop )
+    genes2$min_dist   <- ifelse( bp_mid < genes2$dist_stop & 
+                                 bp_mid > genes2$dist_start,
+                                 0, genes2$min_dist )
+    ng_idx <- which( genes2$min_dist == min(genes2$min_dist) )
+    ng <- paste( genes2$NAME[  ng_idx], collapse="; " )
+    ne <- paste( genes2$ENSGID[ng_idx], collapse="; " )
+    
+    # Stick all results into the list
+    cs_loci0[[i]] <- data.table( hit=hit_name, chr=chr, centre=bp_mid, lo=lo, 
+                                 hi=hi, nearest_gene=ng, nearest_ensgid=ne, p=p )
+  }
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Write credible set-based loci to file
+  #-----------------------------------------------------------------------------
+  
   message2("Write credible set-based loci to file")
   cs_loci <- do.call( rbind, cs_loci0 )
-  cs_loci_file <- file.path( maindir, "loci_cs.tsv" )
+  cs_loci <- cs_loci[ order( cs_loci$chr, cs_loci$centre ) , ]
   fwrite( x=cs_loci, file=cs_loci_file, sep="\t" )
 }
 
 
 #-------------------------------------------------------------------------------
-#   lz_plot:  Create LocusZoom plots
+#   lz_plot:                 Create LocusZoom plots
 #-------------------------------------------------------------------------------
 
-lz_plot <- function( maindir, cond.or.uncond ){
+lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1530,11 +1609,17 @@ lz_plot <- function( maindir, cond.or.uncond ){
   
   # Create a directory to house LZPs
   message2("Create a directory to house LZPs")
-  if( cond.or.uncond == "uncond" ){
-    lzp_dir <- file.path( maindir, "lzp", "unconditioned" )
-  }else if( cond.or.uncond == "cond" ){
-    lzp_dir <- file.path( maindir, "lzp", "conditioned" )
+  if(merge.loci){
+    dir1 <- "merged"
+  }else{
+    dir1 <- "separated"
   }
+  if( cond.or.uncond == "uncond" ){
+    dir2 <- "unconditioned"
+  }else if( cond.or.uncond == "cond" ){
+    dir2 <- "conditioned"
+  }
+  lzp_dir <- file.path( maindir, "lzp", dir1, dir2 )
   dir.create( path=lzp_dir, showWarnings=FALSE, recursive=TRUE )
   
   # Read in the GWAS
@@ -1542,6 +1627,13 @@ lz_plot <- function( maindir, cond.or.uncond ){
     message2("Read in the GWAS")
     gw_file <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
     gw <- fread(gw_file)
+  }
+  
+  # Read in credible set-based loci
+  if( !merge.loci ){
+    message2("Read in credible set-based loci")
+    cs_file <- file.path( maindir, "loci_cs.tsv" )
+    cs <- fread(cs_file)
   }
   
   # Find all conditioned sumstats files
@@ -1620,6 +1712,13 @@ lz_plot <- function( maindir, cond.or.uncond ){
     
     # Add LD to conditioned sumstats
     ss$r2 <- ld$R2[ match( ss$SNP, ld$SNP_B ) ]
+    
+    # If using separated loci, update locus boundaries
+    if( !merge.loci ){
+      hit_name  <- sub( pattern=".jpg$", replacement="", x=lzp_name )
+      loc_start <- cs$lo[ match( hit_name, cs$hit ) ]
+      loc_end   <- cs$hi[ match( hit_name, cs$hit ) ]
+    }
     
     # Put sumstats into LZP format
     loc <- suppressMessages(
