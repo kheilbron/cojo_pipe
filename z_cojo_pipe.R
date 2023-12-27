@@ -78,6 +78,7 @@ check_inputs <- function(){
 
 format_gwas <- function( maindir          = "~/cojo",
                          ld_panel         = "hrc",
+                         population       = "eur_eas",
                          gw_file          = "/home/heilbron/projects/pops/analyses/pd/meta5_raw.tab.gz",
                          chr_bp_col       = "SNP",
                          chr_col          = NULL,
@@ -146,23 +147,60 @@ format_gwas <- function( maindir          = "~/cojo",
   message2("Load libraries and sources")
   library(data.table)
   
+  # Create main directory
+  message2("Create main directory")
+  dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
+  
   # Read in reference panel SNPs
+  rare.or.common.snps <- "rare"
   if( ld_panel == "hrc" ){
-    rare.or.common.snps <- "rare"
-    if( rare.or.common.snps == "common"){
-      message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
-      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
-    }else if( rare.or.common.snps == "rare"){
-      message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
-      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
-    }else{
-      stop("rare.or.common must be 'rare' or 'common'")
+    
+    # Population: Merged EUR and EAS
+    if( population == "eur_eas" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
+        
+      # Rare SNPs (MAC >= 10)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
+      }
+    
+    # Population: EUR
+    }else if( population == "eur" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EUR MAF >= 1%")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_maf_ge_0.01.tsv")
+        
+      # Rare SNPs (MAC >= 10)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EUR MAC >= 10")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_mac_ge_10.tsv")
+      }
+      
+    # Population: EAS
+    }else if( population == "eas" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EAS MAF >= 1%")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_maf_ge_0.01.tsv")
+        
+        # Rare SNPs (MAC >= 10)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EAS MAC >= 10")
+        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_mac_ge_10.tsv")
+      }
     }
+    
   }else if( ld_panel == "g1000" ){
     message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
     hrc <- fread("/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv")
-  }else{
-    stop("ld_panel must be either 'hrc' or 'g1000'")
   }
   
   # Read in GWAS
@@ -443,7 +481,7 @@ qc_gwas <- function( maindir, ld_panel ){
 #   define_loci_clump:       Clump SNPs, add buffer, merge overlapping regions
 #-------------------------------------------------------------------------------
 
-define_loci_clump <- function( maindir, do.test=FALSE ){
+define_loci_clump <- function( maindir, population, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -472,6 +510,26 @@ define_loci_clump <- function( maindir, do.test=FALSE ){
   plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
   gw_file  <- file.path( maindir, "gwas_sumstats.qc.tsv" )
   
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+  # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+  # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
+  
   
   #-----------------------------------------------------------------------------
   #   Loop through chromosomes and clump, then collate results
@@ -482,10 +540,7 @@ define_loci_clump <- function( maindir, do.test=FALSE ){
   for( i in chromosomes ){
     
     # Set per-chromosome clumping arguments
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", i, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, i, bed_suff ) )
     out_pre  <- file.path( clump_dir, paste0( "chr", i ) )
     outfile  <- paste0( out_pre, ".clumped" )
     
@@ -872,7 +927,7 @@ run_cojo_local <- function( maindir, do.test=FALSE ){
 #   run_cojo_cluster:        Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_cluster <- function( maindir, do.test=FALSE ){
+run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -898,6 +953,26 @@ run_cojo_cluster <- function( maindir, do.test=FALSE ){
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
   
   # Create a directory for per-locus COJO outputs
   message2("Create a directory for per-locus COJO outputs")
@@ -934,10 +1009,7 @@ run_cojo_cluster <- function( maindir, do.test=FALSE ){
     chr      <- loci$chr[i]
     lo       <- loci$lo.pos[i]
     hi       <- loci$hi.pos[i]
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, chr, bed_suff ) )
     outname  <- paste0( "chr", chr, "_", lo, "_", hi )
     out_pre  <- file.path( hits_dir, outname )
     outfile  <- paste0( out_pre, ".jma.cojo" )
@@ -1161,7 +1233,7 @@ isolate_signals_local <- function( maindir, do.test=FALSE ){
 #   isolate_signals_cluster: Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals_cluster <- function( maindir, do.test=FALSE ){
+isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1180,6 +1252,26 @@ isolate_signals_cluster <- function( maindir, do.test=FALSE ){
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
   
   # Create a directory for leave-one-hit-out conditioned sumstats
   message2("Create a directory for leave-one-hit-out conditioned sumstats")
@@ -1260,10 +1352,7 @@ isolate_signals_cluster <- function( maindir, do.test=FALSE ){
     snp_file   <- file.path( hits_dir, paste0( locus_name, ".snplist" ) )
     
     # Set BED file path
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, chr, bed_suff ) )
     
     # If there is only one hit, write locus GWAS sumstats
     # If there are multiple hits, sub-loop through hits and run LOHO COJO
@@ -1326,7 +1415,7 @@ isolate_signals_cluster <- function( maindir, do.test=FALSE ){
 #   ld_for_hits:             Compute LD between hits and the rest of the locus
 #-------------------------------------------------------------------------------
 
-ld_for_hits <- function(maindir){
+ld_for_hits <- function( maindir, population ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1348,6 +1437,26 @@ ld_for_hits <- function(maindir){
   # Set static plink arguments
   message2("Set static plink arguments")
   plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
+  
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
   
   # Find all conditioned sumstats files
   loho_dir  <- file.path( maindir, "loho_conditioned_sumstats" )
@@ -1387,10 +1496,7 @@ ld_for_hits <- function(maindir){
     chr <- sub( pattern=pattern, replacement="\\1", x=cma_names[i] )
     
     # Set BED file path
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, chr, bed_suff ) )
     
     # Run plink to get LD
     cmd <- paste( plink, 
