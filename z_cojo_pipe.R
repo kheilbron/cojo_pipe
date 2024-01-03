@@ -64,11 +64,133 @@ p_to_z <- function( p, direction=NULL, limit=.Machine$double.xmin, log.p=FALSE )
 
 
 #-------------------------------------------------------------------------------
-#   check_inputs:            Check validity of inputs
+#   check_arguments:         Check validity of inputs
 #-------------------------------------------------------------------------------
 
-check_inputs <- function(){
-  #
+check_arguments <- function( ld_panel         = NULL, 
+                             population       = NULL,
+                             gw_file          = NULL,
+                             chr_bp_col       = NULL,
+                             chr_col          = NULL,
+                             bp_col           = NULL,
+                             a1_col           = NULL,
+                             a2_col           = NULL,
+                             p_col            = NULL,
+                             eaf_col          = NULL,
+                             n1_col           = NULL,
+                             n0_col           = NULL,
+                             n_col            = NULL,
+                             n                = NULL,
+                             p_threshold      = NULL, 
+                             inflation_factor = NULL ){
+  
+  # ld_panel must be either "hrc" or "g1000"
+  if( ld_panel != "hrc" & ld_panel != "g1000" ) stop("ld_panel must be either 'hrc' or 'g1000'")
+  
+  # population must be one of: "eur", "eas", or "eur_eas"
+  if( population != "eur" & population != "eas" & population != "eur_eas" ){
+    stop("population must be one of: 'eur', 'eas', or 'eur_eas'")
+  }
+  
+  # Does the GWAS file exist?
+  if( !file.exists(gw_file) )  stop("GWAS file does not exist")
+  
+  # Either chr_bp_col or (chr_col + bp_col) must be specified
+  if( is.null(chr_bp_col) ){
+    if( is.null(chr_col) | is.null(bp_col) ){
+      stop("chr_bp_col is not specified so both chr_col and bp_col must be specified")
+    }
+  }else{
+    if( !is.null(chr_col) | !is.null(bp_col) ){
+      stop("chr_bp_col is specified so chr_col and bp_col must not be specified")
+    }
+  }
+  
+  # One of the following must be specified:
+  # n or n_col or (n1_col + n0_col)
+  if( !is.null(n) ){
+    if( !is.null(n_col) | !is.null(n1_col) | !is.null(n0_col) ){
+      stop("n is specified so n_col, n1_col, and n0_col must not be specified")
+    }
+  }else if( !is.null(n_col) ){
+    if( !is.null(n1_col) | !is.null(n0_col) ){
+      stop("n_col is specified so n1_col and n0_col must not be specified")
+    }
+  }else{
+    if( is.null(n1_col) | is.null(n0_col) ){
+      stop("Neither n nor n_col are specified so both n1_col and n0_col must be specified")
+    }
+  }
+  
+  # Check that GWAS file column names exist
+  col.names <- c( chr_bp_col, chr_col, bp_col, a1_col, a2_col, 
+                  p_col, eaf_col, n1_col, n0_col, n_col )
+  library(data.table)
+  gw <- fread( file=gw.file, nrows=100 )
+  bad_col_names <- setdiff( col.names, names(gw) )
+  if( length(bad_col_names) > 0 ){
+    stop("The following specified column names do not exist: ", 
+         paste( bad_col_names, collapse=", " ) )
+  }
+  
+  # Position must be a positive integer
+  if( !is.null(bp_col) ){
+    if( !is.integer( gw[[bp_col]] ) ) stop("Positions must be integers")
+    if( any( gw[[bp_col]] ) < 1  )    stop("Positions must be > 0")
+  }
+  
+  # Alleles must be characters
+  if( !is.character( gw[[a1_col]] ) ) stop("Effect alleles must be characters")
+  if( !is.character( gw[[a2_col]] ) ) stop("Non-effect alleles must be characters")
+  
+  # P value must be >= 0 and <= 1
+  if( !is.numeric( gw[[p_col]] ) ) stop("P values must be numeric")
+  if( any(   gw[[p_col]] ) < 0 )   stop("P values must be >= 0")
+  if( any(   gw[[p_col]] ) > 1 )   stop("P values must be <= 1")
+  
+  # Effect allele frequency must be >= 0 and <= 1
+  if( eaf_col %in% names(gw) ){
+    if( !is.numeric( gw[[eaf_col]] ) ) stop("Effect allele frequencies must be numeric")
+    if( any(   gw[[eaf_col]] ) < 0 )   stop("Effect allele frequencies must be >= 0")
+    if( any(   gw[[eaf_col]] ) > 1 )   stop("Effect allele frequencies must be <= 1")
+  }
+  
+  # Case counts must be positive integers
+  if( !is.null(n1_col) ){
+    if( !is.integer( gw[[n1_col]] ) ) stop("Case counts must be integers")
+    if( any( gw[[n1_col]] < 1 ) )     stop("Case counts must be > 0")
+  }
+  
+  # Control counts must be positive integers
+  if( !is.null(n0_col) ){
+    if( !is.integer( gw[[n0_col]] ) ) stop("Control counts must be integers")
+    if( any( gw[[n0_col]] < 1 ) )     stop("Control counts must be > 0")
+  }
+  
+  # Effective sample sizes must be positive numbers
+  if( !is.null(n_col) ){
+    if( !is.numeric( gw[[n_col]] ) ) stop("Effective sample sizes must be numbers")
+    if( any( gw[[n_col]] <= 0 ) )    stop("Effective sample sizes must be > 0")
+  }
+  
+  # Effective sample size must be a positive number
+  if( !is.null(n) ){
+    if( !is.numeric(n) ) stop("Effective sample size must be a number")
+    if( n <= 0 )         stop("Effective sample size must be > 0")
+  }
+  
+  # P value threshold must be >= 0 and <= 1
+  if( !is.null(p_threshold) ){
+    if( !is.numeric(p_threshold) ) stop("P value threshold must be numeric")
+    if( p_threshold < 0 )          stop("P value threshold must be >= 0")
+    if( p_threshold > 1 )          stop("P value threshold must be <= 1")
+  }
+  
+  # Inflation factor must be a positive number
+  if( !is.null(inflation_factor) ){
+    if( !is.numeric(inflation_factor) ) stop("Inflation factor must be a number")
+    if( inflation_factor <= 0 )         stop("Inflation factor must be > 0")
+  }
 }
 
 
@@ -136,6 +258,7 @@ format_gwas <- function( maindir          = "~/cojo",
   #   n:          If per-SNP sample size information is not available, this
   #               specifies the study-wide effective sample size. If not 
   #               specified, must specify both n1_col and n0_col, or n_col.
+  #   check_args: Logical. Check whether arguments are valid?
   
   
   #-----------------------------------------------------------------------------
@@ -272,9 +395,6 @@ format_gwas <- function( maindir          = "~/cojo",
     gw$se <- ifelse( is.na(new_se), gw$se, new_se )
   }
   
-  # Sort by chromosome and position
-  gw <- gw[ order( gw$chr, gw$bp ) , ]
-  
   
   #-----------------------------------------------------------------------------
   #   Harmonize GWAS and reference panel alleles
@@ -339,6 +459,7 @@ format_gwas <- function( maindir          = "~/cojo",
   message2("Dump GWAS summary statistics")
   gw_outfile <- file.path( maindir, "gwas_sumstats.tsv" )
   gw_out <- gw2[ , c( "SNP", "A1", "A2", "freq", "b", "se", "p", "N", "chr", "bp" ) ]
+  gw_out <- gw_out[ order( gw_out$chr, gw_out$bp ) , ]
   fwrite( x=gw_out, file=gw_outfile, sep="\t" )
   
   
@@ -753,7 +874,7 @@ dentist <- function( maindir, do.test=FALSE ){
 #   run_cojo_genome:         Get independent hits across the whole genome
 #-------------------------------------------------------------------------------
 
-run_cojo_genome <- function( maindir, r=0.9 ){
+run_cojo_genome <- function( maindir, population="eur_eas" ){
   
   # Load libraries and sources
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
@@ -774,19 +895,36 @@ run_cojo_genome <- function( maindir, r=0.9 ){
   cojo_file      <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   cojo_p         <- 5e-8
   
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
+  
   # Create a directory for per-chromosome COJO outputs
   message2("Create a directory for per-chromosome COJO outputs")
-  hits_dir <- file.path( maindir, "hits" )
+  hits_dir <- file.path( maindir, "hits_genome" )
   dir.create( hits_dir, showWarnings=FALSE, recursive=TRUE )
   
   # Loop through chromosomes
   for( i in 1:22 ){
     
     # Set per-chromosome COJO arguments
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", i, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, i, bed_suff ) )
     out_pre  <- file.path( hits_dir, paste0( "chr", i ) )
     outfile  <- paste0( out_pre, ".jma.cojo" )
     
@@ -803,7 +941,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
                   "--cojo-file",      cojo_file,
                   "--cojo-slct",
                   "--cojo-p",         cojo_p,
-                  "--cojo-collinear", r,
+                  "--cojo-collinear", 0.9,
                   "--out",            out_pre )
     system(cmd)
   }
@@ -825,7 +963,7 @@ run_cojo_genome <- function( maindir, r=0.9 ){
 #   run_cojo_local:          Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_local <- function( maindir, do.test=FALSE ){
+run_cojo_local <- function( maindir, population, do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -857,6 +995,26 @@ run_cojo_local <- function( maindir, do.test=FALSE ){
   hits_dir <- file.path( maindir, "hits_locus" )
   dir.create( hits_dir, showWarnings=FALSE, recursive=TRUE )
   
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
+  
   # Read in the GWAS
   message2("Read in the GWAS")
   gw <- fread(cojo_file)
@@ -879,10 +1037,7 @@ run_cojo_local <- function( maindir, do.test=FALSE ){
     chr      <- loci$chr[i]
     lo       <- loci$lo.pos[i]
     hi       <- loci$hi.pos[i]
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, chr, bed_suff ) )
     outname  <- paste0( "chr", chr, "_", lo, "_", hi )
     out_pre  <- file.path( hits_dir, outname )
     outfile  <- paste0( out_pre, ".jma.cojo" )
@@ -1045,6 +1200,12 @@ run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
                    "-e", logfile,
                    "/projects/0/prjs0817/repos/cojo_pipe/b_run_cojo.sh",
                    cmd2 )
+    # cmd3 <- paste( "sbatch",
+    #                "-J", jobname,
+    #                "-o", logfile,
+    #                "-e", logfile,
+    #                "/projects/0/prjs0817/repos/cojo_pipe/b_run_cojo.sh",
+    #                bed_file, cojo_file, chr, snp_file, out_pre )
     system( command=cmd3, intern=FALSE )
   }
   
@@ -1116,7 +1277,7 @@ rm_weak_hits <- function(maindir){
 #   isolate_signals_local:   Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals_local <- function( maindir, do.test=FALSE ){
+isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1135,6 +1296,26 @@ isolate_signals_local <- function( maindir, do.test=FALSE ){
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  
+  # Set reference panel arguments based on population
+  message2("Set reference panel arguments based on population")
+  bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
+  
+  # Merged EUR + EAS
+  if( population == "eur_eas" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+    # Population: EUR
+  }else if( population == "eur" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
+    bed_suff <- ".impute.plink.EUR"
+    
+    # Population: EAS
+  }else if( population == "eas" ){
+    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
+    bed_suff <- ".impute.plink.EAS"
+  }
   
   # Create a directory for leave-one-hit-out conditioned sumstats
   message2("Create a directory for leave-one-hit-out conditioned sumstats")
@@ -1176,13 +1357,9 @@ isolate_signals_local <- function( maindir, do.test=FALSE ){
     snp_file   <- file.path( hits_dir, paste0( locus_name, ".snplist" ) )
     
     # Set BED file path
-    bed_suff <- paste0( "HRC.r1-1.EGA.GRCh37.chr", chr, 
-                        ".impute.plink.combined.EUR.2191.EAS.538" )
-    bed_file <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
-                           "HRC.r1-1_merged_EUR_EAS_panel/", bed_suff )
+    bed_file <- file.path( bed_dir, paste0( bed_pref, chr, bed_suff ) )
     
     # Loop through hits
-    message2( "Starting locus ", i, "/", NROW(loci), ": ", locus_name )
     for( j in seq_along(hits$SNP) ){
       
       # If the output file already exists, skip
@@ -1190,8 +1367,11 @@ isolate_signals_local <- function( maindir, do.test=FALSE ){
       out_pre <- file.path( loho_dir, outname )
       outfile <- paste0( out_pre, ".cma.cojo" )
       if( file.exists(outfile) ){
-        message2( "Output file for: ", outname, " already exists, skipping" )
+        message2( "Output file for locus ", i, "/", NROW(loci), ": ", 
+                  locus_name, " already exists, skipping" )
         next
+      }else{
+        message2( "Starting locus ", i, "/", NROW(loci), ": ", locus_name )
       }
       
       # If there is only one hit, write locus GWAS sumstats
@@ -1408,7 +1588,6 @@ isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALS
           paste( snps_miss, collapse=", " ) )
   }
 }
-
 
 
 #-------------------------------------------------------------------------------
@@ -1857,7 +2036,7 @@ cojo_wrapper <- function(){
   
   # Check inputs
   message_header("Check inputs")
-  check_inputs()
+  check_arguments()
   
   # Format GWAS
   message_header("Format GWAS")
