@@ -629,7 +629,7 @@ define_loci_clump <- function( maindir, population, do.test=FALSE ){
   # Set static clumping arguments
   message2("Set static clumping arguments")
   plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
-  gw_file  <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  gw_file  <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -892,7 +892,7 @@ run_cojo_genome <- function( maindir, population="eur_eas" ){
   message2("Set static COJO arguments")
   gcta_binary    <- file.path( "/projects/0/prjs0817/software/gcta/",
                                "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file      <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cojo_file      <- file.path( maindir, "gwas_sumstats.tsv" )
   cojo_p         <- 5e-8
   
   # Set reference panel arguments based on population
@@ -988,7 +988,7 @@ run_cojo_local <- function( maindir, population, do.test=FALSE ){
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Create a directory for per-locus COJO outputs
   message2("Create a directory for per-locus COJO outputs")
@@ -1107,7 +1107,7 @@ run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1295,7 +1295,7 @@ isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE 
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1431,7 +1431,7 @@ isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALS
   message2("Set static COJO arguments")
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
-  cojo_file   <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1848,16 +1848,15 @@ define_loci_cs <- function(maindir){
     genes2$dist_stop  <- abs( genes2$END   - bp_mid )
     genes2$min_dist   <- ifelse( genes2$dist_start < genes2$dist_stop,
                                  genes2$dist_start,  genes2$dist_stop )
-    genes2$min_dist   <- ifelse( bp_mid < genes2$dist_stop & 
-                                 bp_mid > genes2$dist_start,
+    genes2$min_dist   <- ifelse( bp_mid < genes2$END & 
+                                 bp_mid > genes2$START,
                                  0, genes2$min_dist )
     ng_idx <- which( genes2$min_dist == min(genes2$min_dist) )
     ng <- paste( genes2$NAME[  ng_idx], collapse="; " )
-    ne <- paste( genes2$ENSGID[ng_idx], collapse="; " )
     
     # Stick all results into the list
     cs_loci0[[i]] <- data.table( hit=hit_name, chr=chr, centre=bp_mid, lo=lo, 
-                                 hi=hi, nearest_gene=ng, nearest_ensgid=ne, p=p )
+                                 hi=hi, nearest=ng, p=p )
   }
   
   
@@ -1910,7 +1909,7 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
   # Read in the GWAS
   if( cond.or.uncond == "uncond" ){
     message2("Read in the GWAS")
-    gw_file <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+    gw_file <- file.path( maindir, "gwas_sumstats.tsv" )
     gw <- fread(gw_file)
   }
   
