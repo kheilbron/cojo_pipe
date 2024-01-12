@@ -1834,9 +1834,10 @@ define_loci_cs <- function(maindir){
     hit_name <- sub( pattern=".cs$", replacement="", x=cs_names[i])
     
     # Define CS-based locus boundaries
+    window <- 2e5
     chr <- unique(cs$chr)
-    lo  <- min(cs$bp) - 5e5
-    hi  <- max(cs$bp) + 5e5
+    lo  <- min(cs$bp) - window
+    hi  <- max(cs$bp) + window
     p   <- min(cs$p)
     
     # Find the PIP-weighted central position
@@ -1851,12 +1852,13 @@ define_loci_cs <- function(maindir){
     genes2$min_dist   <- ifelse( bp_mid < genes2$END & 
                                  bp_mid > genes2$START,
                                  0, genes2$min_dist )
-    ng_idx <- which( genes2$min_dist == min(genes2$min_dist) )
+    min_dist <- min(genes2$min_dist)
+    ng_idx <- which( genes2$min_dist == min_dist )
     ng <- paste( genes2$NAME[  ng_idx], collapse="; " )
     
     # Stick all results into the list
     cs_loci0[[i]] <- data.table( hit=hit_name, chr=chr, centre=bp_mid, lo=lo, 
-                                 hi=hi, nearest=ng, p=p )
+                                 hi=hi, nearest=ng, dist=min_dist, p=p )
   }
   
   
@@ -2006,12 +2008,13 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
     
     # Put sumstats into LZP format
     loc <- suppressMessages(
-      locus( data  = ss, 
-             chrom = "chr", seqname   = ss$chr[1], 
-             pos   = "bp",  xrange    = c( as.integer(loc_start), 
+      locus( data  = as.data.frame(ss),
+             chrom = "chr", seqname   = ss$chr[1],
+             pos   = "bp",  xrange    = c( as.integer(loc_start),
                                            as.integer(loc_end) ),
-             p     = "p",   ens_db    = "EnsDb.Hsapiens.v75", 
+             p     = "p",   ens_db    = "EnsDb.Hsapiens.v75",
              LD    = "r2",  index_snp = snp ) )
+    loc <- suppressMessages( link_recomb( loc, genome="hg19" ) )
     
     # Make LZP
     jpeg( filename=lzp_out, width=480*4, height=480*4, res=75*4 )
