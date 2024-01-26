@@ -1717,6 +1717,10 @@ credible_sets <- function(maindir){
   
   # If output files already exist, skip
   
+  # Read in coding and promoter SNPs
+  hhc <- fread("/projects/0/prjs0817/projects/cojo/data/high_h2_coding_SNPs.tsv")
+  hhp <- fread("/projects/0/prjs0817/projects/cojo/data/high_h2_promoter_SNPs.tsv")
+  
   # Find all conditioned sumstats files
   loho_dir  <- file.path( maindir, "loho_conditioned_sumstats" )
   cma_names <- list.files( path=loho_dir, pattern=".cma.cojo$" )
@@ -1777,6 +1781,12 @@ credible_sets <- function(maindir){
       ss3 <- head( ss2, idx[1] )
     }
     
+    # Annotate CS with whether SNPs are coding or promoter
+    ss3$coding   <- hhc$gene[   match( ss3$SNP, hhc$SNP ) ]
+    ss3$promoter <- hhp$gene[   match( ss3$SNP, hhp$SNP ) ]
+    ss3$ensgid_c <- hhc$ensgid[ match( ss3$SNP, hhc$SNP ) ]
+    ss3$ensgid_p <- hhp$ensgid[ match( ss3$SNP, hhp$SNP ) ]
+    
     # Write sumstats for credible set SNPs to file
     fwrite( x=ss3, file=outfile, sep="\t" )
   }
@@ -1834,7 +1844,7 @@ define_loci_cs <- function(maindir){
     hit_name <- sub( pattern=".cs$", replacement="", x=cs_names[i])
     
     # Define CS-based locus boundaries
-    window <- 2e5
+    window <- 3e5
     chr <- unique(cs$chr)
     lo  <- min(cs$bp) - window
     hi  <- max(cs$bp) + window
@@ -1842,6 +1852,10 @@ define_loci_cs <- function(maindir){
     
     # Find the PIP-weighted central position
     bp_mid <- round( sum( cs$bp * cs$pip / sum(cs$pip) ) )
+    
+    # Find genes affected by coding/promoter SNPs
+    c_genes <- paste( unique( cs$coding[   cs$coding   != "" ] ), collapse=";" )
+    p_genes <- paste( unique( cs$promoter[ cs$promoter != "" ] ), collapse=";" )
     
     # Find the nearest gene
     genes2 <- genes[ genes$CHR == chr , ]
@@ -1858,7 +1872,8 @@ define_loci_cs <- function(maindir){
     
     # Stick all results into the list
     cs_loci0[[i]] <- data.table( hit=hit_name, chr=chr, centre=bp_mid, lo=lo, 
-                                 hi=hi, nearest=ng, dist=min_dist, p=p )
+                                 hi=hi, nearest=ng, dist=min_dist, p=p, 
+                                 coding=c_genes, promoter=p_genes )
   }
   
   
@@ -1869,6 +1884,8 @@ define_loci_cs <- function(maindir){
   message2("Write credible set-based loci to file")
   cs_loci <- do.call( rbind, cs_loci0 )
   cs_loci <- cs_loci[ order( cs_loci$chr, cs_loci$centre ) , ]
+  cs_loci$coding[   cs_loci$coding   == "NA" ] <- NA
+  cs_loci$promoter[ cs_loci$promoter == "NA" ] <- NA
   fwrite( x=cs_loci, file=cs_loci_file, sep="\t" )
 }
 
@@ -1921,6 +1938,10 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
     cs_file <- file.path( maindir, "loci_cs.tsv" )
     cs <- fread(cs_file)
   }
+  
+  # Read in coding and promoter SNPs
+  hhc <- fread("/projects/0/prjs0817/projects/cojo/data/high_h2_coding_SNPs.tsv")
+  hhp <- fread("/projects/0/prjs0817/projects/cojo/data/high_h2_promoter_SNPs.tsv")
   
   # Find all conditioned sumstats files
   loho_dir <- file.path( maindir, "loho_conditioned_sumstats" )
@@ -1988,7 +2009,7 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
     
     
     #-----------------------------------------------------------------------------
-    #   Add LD to sumstats, format, plot
+    #   Add LD, coding SNPs, and promoter SNPs to sumstats
     #-----------------------------------------------------------------------------
     
     # Read in LD
@@ -1998,6 +2019,16 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
     
     # Add LD to conditioned sumstats
     ss$r2 <- ld$R2[ match( ss$SNP, ld$SNP_B ) ]
+    
+    # Annotate CS with whether SNPs are coding or promoter
+    ss$pch <- 21
+    ss$pch[ ss$SNP %in% hhp$SNP ] <- 24
+    ss$pch[ ss$SNP %in% hhc$SNP ] <- 25
+    
+    
+    #-----------------------------------------------------------------------------
+    #   Plot
+    #-----------------------------------------------------------------------------
     
     # If using separated loci, update locus boundaries
     if( !merge.loci ){
@@ -2025,7 +2056,7 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
 
 
 #-------------------------------------------------------------------------------
-#   cojo_wrapper:      Runs the pipeline
+#   cojo_wrapper:            Runs the pipeline
 #-------------------------------------------------------------------------------
 
 cojo_wrapper <- function(){
