@@ -1853,27 +1853,9 @@ define_loci_cs <- function(maindir){
     # Find the PIP-weighted central position
     bp_mid <- round( sum( cs$bp * cs$pip / sum(cs$pip) ) )
     
-    # Find genes affected by coding/promoter SNPs
-    c_genes <- paste( unique( cs$coding[   cs$coding   != "" ] ), collapse=";" )
-    p_genes <- paste( unique( cs$promoter[ cs$promoter != "" ] ), collapse=";" )
-    
-    # Find the nearest gene
-    genes2 <- genes[ genes$CHR == chr , ]
-    genes2$dist_start <- abs( genes2$START - bp_mid )
-    genes2$dist_stop  <- abs( genes2$END   - bp_mid )
-    genes2$min_dist   <- ifelse( genes2$dist_start < genes2$dist_stop,
-                                 genes2$dist_start,  genes2$dist_stop )
-    genes2$min_dist   <- ifelse( bp_mid < genes2$END & 
-                                 bp_mid > genes2$START,
-                                 0, genes2$min_dist )
-    min_dist <- min(genes2$min_dist)
-    ng_idx <- which( genes2$min_dist == min_dist )
-    ng <- paste( genes2$NAME[  ng_idx], collapse="; " )
-    
     # Stick all results into the list
     cs_loci0[[i]] <- data.table( hit=hit_name, chr=chr, centre=bp_mid, lo=lo, 
-                                 hi=hi, nearest=ng, dist=min_dist, p=p, 
-                                 coding=c_genes, promoter=p_genes )
+                                 hi=hi, p=p )
   }
   
   
@@ -1884,8 +1866,6 @@ define_loci_cs <- function(maindir){
   message2("Write credible set-based loci to file")
   cs_loci <- do.call( rbind, cs_loci0 )
   cs_loci <- cs_loci[ order( cs_loci$chr, cs_loci$centre ) , ]
-  cs_loci$coding[   cs_loci$coding   == "NA" ] <- NA
-  cs_loci$promoter[ cs_loci$promoter == "NA" ] <- NA
   fwrite( x=cs_loci, file=cs_loci_file, sep="\t" )
 }
 
