@@ -81,8 +81,10 @@ check_arguments <- function( ld_panel         = NULL,
                              n0_col           = NULL,
                              n_col            = NULL,
                              n                = NULL,
-                             p_threshold      = NULL, 
-                             inflation_factor = NULL ){
+                             p_threshold      = NULL,
+                             do_test          = NULL,
+                             do_qc            = NULL,
+                             do_dentist       = NULL ){
   
   # ld_panel must be either "hrc" or "g1000"
   if( ld_panel != "hrc" & ld_panel != "g1000" ) stop("ld_panel must be either 'hrc' or 'g1000'")
@@ -126,7 +128,7 @@ check_arguments <- function( ld_panel         = NULL,
   col.names <- c( chr_bp_col, chr_col, bp_col, a1_col, a2_col, 
                   p_col, eaf_col, n1_col, n0_col, n_col )
   library(data.table)
-  gw <- fread( file=gw.file, nrows=100 )
+  gw <- fread( file=gw_file, nrows=100 )
   bad_col_names <- setdiff( col.names, names(gw) )
   if( length(bad_col_names) > 0 ){
     stop("The following specified column names do not exist: ", 
@@ -149,10 +151,12 @@ check_arguments <- function( ld_panel         = NULL,
   if( any(   gw[[p_col]] ) > 1 )   stop("P values must be <= 1")
   
   # Effect allele frequency must be >= 0 and <= 1
-  if( eaf_col %in% names(gw) ){
-    if( !is.numeric( gw[[eaf_col]] ) ) stop("Effect allele frequencies must be numeric")
-    if( any(   gw[[eaf_col]] ) < 0 )   stop("Effect allele frequencies must be >= 0")
-    if( any(   gw[[eaf_col]] ) > 1 )   stop("Effect allele frequencies must be <= 1")
+  if( !is.null(eaf_col) ){
+    if( eaf_col %in% names(gw) ){
+      if( !is.numeric( gw[[eaf_col]] ) ) stop("Effect allele frequencies must be numeric")
+      if( any(   gw[[eaf_col]] ) < 0 )   stop("Effect allele frequencies must be >= 0")
+      if( any(   gw[[eaf_col]] ) > 1 )   stop("Effect allele frequencies must be <= 1")
+    }
   }
   
   # Case counts must be positive integers
@@ -186,11 +190,77 @@ check_arguments <- function( ld_panel         = NULL,
     if( p_threshold > 1 )          stop("P value threshold must be <= 1")
   }
   
-  # Inflation factor must be a positive number
-  if( !is.null(inflation_factor) ){
-    if( !is.numeric(inflation_factor) ) stop("Inflation factor must be a number")
-    if( inflation_factor <= 0 )         stop("Inflation factor must be > 0")
+  # do_* must be logical
+  if( !is.logical(do_test) )     stop("do_test must be TRUE or FALSE")
+  if( !is.logical(do_qc) )       stop("do_qc must be TRUE or FALSE")
+  if( !is.logical(do_dentist) )  stop("do_dentist must be TRUE or FALSE")
+}
+
+
+#-------------------------------------------------------------------------------
+#   read_reference_snps:     Read in reference panel SNPs
+#-------------------------------------------------------------------------------
+
+read_reference_snps <- function( ld_panel            = "hrc", 
+                                 population          = NULL, 
+                                 rare.or.common.snps = "rare" ){
+  
+  # Find the correct set of reference panel SNPs
+  if( ld_panel == "hrc" ){
+    
+    # Population: Merged EUR and EAS
+    if( population == "eur_eas" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv"
+        
+        # Rare SNPs (MAC >= 10)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv"
+      }
+      
+      # Population: EUR
+    }else if( population == "eur" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EUR MAF >= 1%")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_maf_ge_0.01.tsv"
+        
+        # Rare SNPs (MAC >= 5)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EUR MAC >= 5")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_mac_ge_5.tsv"
+      }
+      
+      # Population: EAS
+    }else if( population == "eas" ){
+      
+      # Common SNPs (MAF >= 1%)
+      if( rare.or.common.snps == "common" ){
+        message2("Read in HRC SNPs with EAS MAF >= 1%")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_maf_ge_0.01.tsv"
+        
+        # Rare SNPs (MAC >= 5)
+      }else if( rare.or.common.snps == "rare" ){
+        message2("Read in HRC SNPs with EAS MAC >= 5")
+        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_mac_ge_5.tsv"
+      }
+    }
+    
+  }else if( ld_panel == "g1000" ){
+    message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
+    hfile <- "/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv"
   }
+  
+  # Read in reference panel SNPs
+  hrc <- fread(hfile)
+  
+  # Return
+  return(hrc)
 }
 
 
@@ -216,8 +286,7 @@ format_gwas <- function( maindir          = "~/cojo",
                          n0_col           = "N_controls",
                          n_col            = NULL,
                          n                = NULL,
-                         p_threshold      = 1, 
-                         inflation_factor = 1 ){
+                         p_threshold      = 1 ){
   
   # If output files already exist, skip
   # If specified, correct for inflation
@@ -275,56 +344,8 @@ format_gwas <- function( maindir          = "~/cojo",
   dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
   
   # Read in reference panel SNPs
-  rare.or.common.snps <- "rare"
-  if( ld_panel == "hrc" ){
-    
-    # Population: Merged EUR and EAS
-    if( population == "eur_eas" ){
-      
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
-        
-      # Rare SNPs (MAC >= 10)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
-      }
-    
-    # Population: EUR
-    }else if( population == "eur" ){
-      
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EUR MAF >= 1%")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_maf_ge_0.01.tsv")
-        
-      # Rare SNPs (MAC >= 10)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EUR MAC >= 10")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_mac_ge_10.tsv")
-      }
-      
-    # Population: EAS
-    }else if( population == "eas" ){
-      
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EAS MAF >= 1%")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_maf_ge_0.01.tsv")
-        
-        # Rare SNPs (MAC >= 10)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EAS MAC >= 10")
-        hrc <- fread("/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_mac_ge_10.tsv")
-      }
-    }
-    
-  }else if( ld_panel == "g1000" ){
-    message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
-    hrc <- fread("/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv")
-  }
+  hrc <- read_reference_snps( ld_panel   = ld_panel, 
+                              population = population )
   
   # Read in GWAS
   message2("Read in GWAS")
@@ -393,6 +414,7 @@ format_gwas <- function( maindir          = "~/cojo",
   if(replace_se){
     new_se <- gw$b / p_to_z( p=gw$p, direction=gw$b )
     gw$se <- ifelse( is.na(new_se), gw$se, new_se )
+    gw <- gw[ !is.na(gw$se) & gw$se!=0 , ]
   }
   
   
@@ -427,7 +449,11 @@ format_gwas <- function( maindir          = "~/cojo",
   gw2$A2[discord]   <- original_gwas_A1[discord]
   gw2$A1[discord]   <- original_gwas_A2[discord]
   gw2$b[discord]    <- -1 * gw2$b[discord]
-  gw2$freq[discord] <- 1  - gw2$freq[discord]
+  if( !is.null(eaf_col) ){
+    gw2$freq[discord] <- 1  - gw2$freq[discord]
+  }else{
+    gw2$freq <- hrc2$af
+  }
   
   
   #-----------------------------------------------------------------------------
@@ -470,10 +496,10 @@ format_gwas <- function( maindir          = "~/cojo",
 
 
 #-------------------------------------------------------------------------------
-#   qc_gwas:                 Write GWAS sumstats in COJO format
+#   qc_gwas:                 QC GWAS sumstats
 #-------------------------------------------------------------------------------
 
-qc_gwas <- function( maindir, ld_panel ){
+qc_gwas <- function( maindir, ld_panel, population ){
   
   #-----------------------------------------------------------------------------
   #   Read in GWAS and HRC
@@ -485,23 +511,8 @@ qc_gwas <- function( maindir, ld_panel ){
   library(data.table)
   
   # Read in reference panel SNPs
-  if( ld_panel == "hrc" ){
-    rare.or.common.snps <- "rare"
-    if( rare.or.common.snps == "common"){
-      message2("Read in HRC SNPs with EUR MAF >= 1%")
-      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv")
-    }else if( rare.or.common.snps == "rare"){
-      message2("Read in HRC SNPs with EUR MAC >= 10")
-      hrc <- fread("/home/heilbron/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv")
-    }else{
-      stop("rare.or.common must be 'rare' or 'common'")
-    }
-  }else if( ld_panel == "g1000" ){
-    message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
-    hrc <- fread("/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv")
-  }else{
-    stop("ld_panel must be either 'hrc' or 'g1000'")
-  }
+  hrc <- read_reference_snps( ld_panel   = ld_panel, 
+                              population = population )
   
   # Read in GWAS
   message2("Read in GWAS")
@@ -527,7 +538,7 @@ qc_gwas <- function( maindir, ld_panel ){
   
   # Remove SNPs with a large AF difference between the GWAS and reference
   big_af_diff  <- 0.1
-  big_af_ratio <- 3
+  big_af_ratio <- 12
   abs_af   <- abs( gw2$freq - hrc2$af )               > big_af_diff
   ratio_af <- exp( abs( log( gw2$freq / hrc2$af ) ) ) > big_af_ratio
   diff_af  <- abs_af | ratio_af
@@ -602,7 +613,7 @@ qc_gwas <- function( maindir, ld_panel ){
 #   define_loci_clump:       Clump SNPs, add buffer, merge overlapping regions
 #-------------------------------------------------------------------------------
 
-define_loci_clump <- function( maindir, population, do.test=FALSE ){
+define_loci_clump <- function( maindir, population, do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -630,6 +641,8 @@ define_loci_clump <- function( maindir, population, do.test=FALSE ){
   message2("Set static clumping arguments")
   plink    <- file.path( "/projects/0/prjs0817/software/plink/plink" )
   gw_file  <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_file  <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  if( file.exists(qc_file) )  gw_file <- qc_file
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -657,7 +670,7 @@ define_loci_clump <- function( maindir, population, do.test=FALSE ){
   #-----------------------------------------------------------------------------
   
   chromosomes <- 1:22
-  if(do.test) chromosomes <- 22
+  if(do_test) chromosomes <- 21
   for( i in chromosomes ){
     
     # Set per-chromosome clumping arguments
@@ -754,7 +767,7 @@ define_loci_clump <- function( maindir, population, do.test=FALSE ){
 #   dentist:                 Run DENTIST and remove SNPs that fail
 #-------------------------------------------------------------------------------
 
-dentist <- function( maindir, do.test=FALSE ){
+dentist <- function( maindir, do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -808,7 +821,7 @@ dentist <- function( maindir, do.test=FALSE ){
   #-----------------------------------------------------------------------------
   
   locus_idx <- seq_along(loci$chr)
-  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
+  if(do_test) locus_idx <- locus_idx[ loci$chr == 21 ]
   for( i in locus_idx ){
     
     # Extract locus information
@@ -867,6 +880,11 @@ dentist <- function( maindir, do.test=FALSE ){
   
   # Write QC'd GWAS to file
   fwrite( x=gw_post, file=dent_outfile, sep="\t" )
+  
+  
+  #-----------------------------------------------------------------------------
+  #   Done
+  #-----------------------------------------------------------------------------
 }
 
 
@@ -963,7 +981,7 @@ run_cojo_genome <- function( maindir, population="eur_eas" ){
 #   run_cojo_local:          Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_local <- function( maindir, population, do.test=FALSE ){
+run_cojo_local <- function( maindir, population, do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -989,6 +1007,8 @@ run_cojo_local <- function( maindir, population, do.test=FALSE ){
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_file     <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  if( file.exists(qc_file) )  cojo_file <- qc_file
   
   # Create a directory for per-locus COJO outputs
   message2("Create a directory for per-locus COJO outputs")
@@ -1030,7 +1050,7 @@ run_cojo_local <- function( maindir, population, do.test=FALSE ){
   #-----------------------------------------------------------------------------
   
   locus_idx <- seq_along(loci$chr)
-  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
+  if(do_test) locus_idx <- locus_idx[ loci$chr == 21 ]
   for( i in locus_idx ){
     
     # Set per-locus COJO arguments
@@ -1082,7 +1102,7 @@ run_cojo_local <- function( maindir, population, do.test=FALSE ){
 #   run_cojo_cluster:        Get independent hits in each clumping-defined locus
 #-------------------------------------------------------------------------------
 
-run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
+run_cojo_cluster <- function( maindir, population="eur_eas", do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1108,6 +1128,8 @@ run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_file     <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  if( file.exists(qc_file) )  cojo_file <- qc_file
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1157,7 +1179,7 @@ run_cojo_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
   
   # Loop through loci
   locus_idx <- seq_along(loci$chr)
-  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
+  if(do_test) locus_idx <- locus_idx[ loci$chr == 21 ]
   for( i in locus_idx ){
     
     # Set per-locus COJO arguments
@@ -1277,7 +1299,7 @@ rm_weak_hits <- function(maindir){
 #   isolate_signals_local:   Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE ){
+isolate_signals_local <- function( maindir, population="eur_eas", do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1296,6 +1318,9 @@ isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE 
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_file     <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  if( file.exists(qc_file) )  cojo_file <- qc_file
+  
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1341,7 +1366,7 @@ isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE 
   #-----------------------------------------------------------------------------
   
   locus_idx <- seq_along(loci$chr)
-  if(do.test) locus_idx <- locus_idx[ loci$chr == 22 ]
+  if(do_test) locus_idx <- locus_idx[ loci$chr == 21 ]
   for( i in locus_idx ){
     
     # Subset to local COJO hits
@@ -1413,7 +1438,7 @@ isolate_signals_local <- function( maindir, population="eur_eas", do.test=FALSE 
 #   isolate_signals_cluster: Extract conditioned sumstats for each independent hit
 #-------------------------------------------------------------------------------
 
-isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALSE ){
+isolate_signals_cluster <- function( maindir, population="eur_eas", do_test=FALSE ){
   
   #-----------------------------------------------------------------------------
   #   Get set up
@@ -1432,6 +1457,8 @@ isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALS
   gcta_binary <- file.path( "/projects/0/prjs0817/software/gcta/",
                             "gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1" )
   cojo_file   <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_file     <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  if( file.exists(qc_file) )  cojo_file <- qc_file
   
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
@@ -1485,7 +1512,7 @@ isolate_signals_cluster <- function( maindir, population="eur_eas", do.test=FALS
   
   # Loop through hits
   hits_idx <- seq_along(all_hits$SNP)
-  if(do.test) hits_idx <- hits_idx[ all_hits$Chr == 22 ]
+  if(do_test) hits_idx <- hits_idx[ all_hits$Chr == 21 ]
   for( i in hits_idx ){
     
     #-----------------------------------------------------------------------------
@@ -1909,6 +1936,8 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
   if( cond.or.uncond == "uncond" ){
     message2("Read in the GWAS")
     gw_file <- file.path( maindir, "gwas_sumstats.tsv" )
+    qc_file <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+    if( file.exists(qc_file) )  gw_file <- qc_file
     gw <- fread(gw_file)
   }
   
@@ -2039,37 +2068,315 @@ lz_plot <- function( maindir, cond.or.uncond, merge.loci=TRUE ){
 #   cojo_wrapper:            Runs the pipeline
 #-------------------------------------------------------------------------------
 
-cojo_wrapper <- function(){
+cojo_wrapper <- function( maindir          = "~/cojo",
+                          ld_panel         = "hrc",
+                          population       = "eur_eas",
+                          gw_file          = "/home/heilbron/projects/pops/analyses/pd/meta5_raw.tab.gz",
+                          chr_bp_col       = "SNP",
+                          chr_col          = NULL,
+                          bp_col           = NULL,
+                          a1_col           = "A1",
+                          a2_col           = "A2",
+                          b_col            = NULL,
+                          or_col           = NULL,
+                          se_col           = NULL,
+                          p_col            = "p",
+                          eaf_col          = "freq",
+                          n1_col           = "N_cases",
+                          n0_col           = "N_controls",
+                          n_col            = NULL,
+                          n                = NULL,
+                          p_threshold      = 1,
+                          do_test          = FALSE,
+                          do_qc            = FALSE,
+                          do_dentist       = FALSE,
+                          check_args       = TRUE ){
+  
+  
+  #-------------------------------------------------------------------------------
+  #   Input descriptions
+  #-------------------------------------------------------------------------------
+  
+  #   maindir:          Main directory in which to store results
+  #   ld_panel:         Which LD reference panel should be used? Options are 
+  #                     either: "hrc" or "g1000".
+  #   population:       Which populations should be used? Options are: 
+  #                     "eur", "eas", or "eur_eas".
+  #   gw_file:          GWAS file name
+  #   chr_bp_col:       Optional. The name of a GWAS column containing 
+  #                     chromosome and bp information separated by a punctuation 
+  #                     character. Must be specified if chr_col and bp_col are 
+  #                     not specified.
+  #   chr_col:          Optional. The name of a GWAS column containing 
+  #                     chromosome information. Must be specified if chr_bp_col 
+  #                     is not specified.
+  #   bp_col:           Optional. The name of a GWAS column containing position 
+  #                     (bp) information. Must be specified if chr_bp_col is not 
+  #                     specified.
+  #   a1_col:           The name of a GWAS column containing the effect (alt) 
+  #                     allele
+  #   a2_col:           The name of a GWAS column containing the non-effect 
+  #                     (ref) allele
+  #   p_col:            The name of a GWAS column containing the P value
+  #   eaf_col           Optional. The name of a GWAS column containing the 
+  #                     frequency of the effect (alt) allele. If not specified, 
+  #                     all palindromic SNPs will be removed. Otherwise 
+  #                     palindromic SNPs with similar frequencies in GWAS and 
+  #                     HRC will be preserved.
+  #   n1_col:           The name of a GWAS column containing the per-SNP number 
+  #                     of cases. Must be specified with n0_col, or must specify 
+  #                     n_col or n.
+  #   n0_col:           The name of a GWAS column containing the per-SNP number 
+  #                     of controls. Must be specified with n1_col, or must 
+  #                     specify n_col or n.
+  #   n_col:            The name of a GWAS column containing the per-SNP 
+  #                     effective sample size. If not specified, must specify 
+  #                     both n1_col and n0_col, or n.
+  #   n:                If per-SNP sample size information is not available, 
+  #                     this specifies the study-wide effective sample size. If 
+  #                     not specified, must specify both n1_col and n0_col, or 
+  #                     n_col.
+  #   p_threshold:      All P values weaker than this threshold will be removed
+  #   do_test:          Run on chr22 only to speed up computation
+  #   do_qc:            Run the QC step?
+  #   do_dentist:       Run additional QC using DENTIST?
+  #   check_args:       Logical. Check whether arguments are valid?
+  
+  
+  #-------------------------------------------------------------------------------
+  #   Print inputs
+  #-------------------------------------------------------------------------------
   
   # Load libraries and sources
   source("/projects/0/prjs0817/repos/cojo_pipe/z_cojo_pipe.R")
+  message2("Load libraries and sources")
+  suppressPackageStartupMessages( library(data.table) )
   
-  # Make a project area
+  # Print inputs
+  message_header("Print inputs")
+  message2( "Main directory:                      ", maindir )
+  message2( "LD reference panel:                  ", ld_panel )
+  message2( "Population:                          ", population )
+  message2( "GWAS file:                           ", gw_file )
+  message2( "Chromosome and position column name: ", chr_bp_col )
+  message2( "Chromosome column name:              ", chr_col )
+  message2( "Position column name:                ", bp_col )
+  message2( "Allele 1 column name:                ", a1_col )
+  message2( "Allele 2 column name:                ", a2_col )
+  message2( "Effect size column name:             ", b_col )
+  message2( "Odds ratio column name:              ", or_col )
+  message2( "Standard error column name:          ", se_col )
+  message2( "P value column name:                 ", p_col )
+  message2( "Effect allele frequency column name: ", eaf_col )
+  message2( "Case sample size column name:        ", n1_col )
+  message2( "Control sample size column name:     ", n0_col )
+  message2( "Effective sample size column name:   ", n_col )
+  message2( "Effective sample size:               ", n )
+  message2( "P value threshold:                   ", p_threshold )
+  message2( "Do test?:                            ", do_test )
+  message2( "Do QC?:                              ", do_qc )
+  message2( "Do DENTIST?:                         ", do_dentist )
+  message2( "Check arguments?:                    ", check_args )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   Check arguments
+  #-------------------------------------------------------------------------------
+  
+  if(check_args){
+    message_header("Check arguments")
+    message2("Checking arguments")
+    check_arguments( ld_panel    = ld_panel, 
+                     population  = population,
+                     gw_file     = gw_file,
+                     chr_bp_col  = chr_bp_col,
+                     chr_col     = chr_col,
+                     bp_col      = bp_col,
+                     a1_col      = a1_col,
+                     a2_col      = a2_col,
+                     p_col       = p_col,
+                     eaf_col     = eaf_col,
+                     n1_col      = n1_col,
+                     n0_col      = n0_col,
+                     n_col       = n_col,
+                     n           = n,
+                     p_threshold = p_threshold,
+                     do_test     = do_test,
+                     do_qc       = do_qc,
+                     do_dentist  = do_dentist )
+  }
+  
+  
+  #-------------------------------------------------------------------------------
+  #   Assign output file names
+  #-------------------------------------------------------------------------------
+  
+  # Make output directory
   dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
   
-  # Check inputs
-  message_header("Check inputs")
-  check_arguments()
+  # Assign output file names
+  gw_outfile      <- file.path( maindir, "gwas_sumstats.tsv" )
+  qc_outfile      <- file.path( maindir, "gwas_sumstats.qc.tsv" )
+  dentist_outfile <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
   
-  # Format GWAS
-  message_header("Format GWAS")
-  format_gwas( maindir, gwas_file, p_threshold, inflation_factor,
-               column_names, ld_ref_file )
   
-  # Run COJO
-  message_header("Run COJO")
-  run_cojo(maindir)
+  #-------------------------------------------------------------------------------
+  #   format_gwas
+  #-------------------------------------------------------------------------------
   
-  # Isolate signals
+  message_header("Format the GWAS, write the SNP location and peaks files")
+  if( file.exists(gw_outfile) ){
+    message2("GWAS sumstats file exist, skipping")
+    
+  }else{
+    format_gwas( maindir     = maindir,
+                 ld_panel    = ld_panel,
+                 population  = population,
+                 gw_file     = gw_file,
+                 chr_bp_col  = chr_bp_col,
+                 chr_col     = chr_col,
+                 bp_col      = bp_col,
+                 a1_col      = a1_col,
+                 a2_col      = a2_col,
+                 b_col       = b_col,
+                 or_col      = or_col,
+                 se_col      = se_col,
+                 p_col       = p_col,
+                 eaf_col     = eaf_col,
+                 n1_col      = n1_col,
+                 n0_col      = n0_col,
+                 n_col       = n_col,
+                 n           = n,
+                 p_threshold = p_threshold )
+  }
+  
+  
+  #-------------------------------------------------------------------------------
+  #   qc_gwas
+  #-------------------------------------------------------------------------------
+  
+  message_header("QC GWAS sumstats")
+  if( !do_qc ){
+    message2("QC has not been indicated, skipping")
+    
+  }else if( file.exists(qc_outfile) ){
+    message2("QC'd GWAS sumstats file exist, skipping")
+    
+  }else{
+    qc_gwas( maindir    = maindir, 
+             ld_panel   = ld_panel, 
+             population = population )
+  }
+  
+  
+  #-------------------------------------------------------------------------------
+  #   define_loci_clump
+  #-------------------------------------------------------------------------------
+  
+  message_header("Define LD-based loci")
+  define_loci_clump( maindir    = maindir, 
+                     population = population, 
+                     do_test    = do_test )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   dentist
+  #-------------------------------------------------------------------------------
+  
+  message_header("DENTIST")
+  if( !do_dentist ){
+    message2("DENTIST has not been indicated, skipping")
+    
+  }else if( file.exists(dentist_outfile) ){
+    message2("DENTIST-QC'd GWAS sumstats file exist, skipping")
+    
+  }else{
+    qc_gwas( maindir    = maindir, 
+             ld_panel   = ld_panel, 
+             population = population )
+  }
+  
+  
+  #-------------------------------------------------------------------------------
+  #   run_cojo_local
+  #-------------------------------------------------------------------------------
+  
+  message_header("Run COJO locally")
+  run_cojo_local( maindir    = maindir, 
+                  population = population, 
+                  do_test    = do_test )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   rm_weak_hits
+  #-------------------------------------------------------------------------------
+  
+  message_header("Remove weak COJO hits")
+  rm_weak_hits( maindir = maindir )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   isolate_signals_local
+  #-------------------------------------------------------------------------------
+  
   message_header("Isolate signals")
-  isolate_signals(maindir)
+  isolate_signals_local( maindir    = maindir, 
+                         population = population, 
+                         do_test    = do_test )
   
-  # Compute credible sets
+  
+  #-------------------------------------------------------------------------------
+  #   ld_for_hits
+  #-------------------------------------------------------------------------------
+  
+  message_header("Get LD between GWAS hits and nearby SNPs")
+  ld_for_hits( maindir    = maindir, 
+               population = population )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   credible_sets
+  #-------------------------------------------------------------------------------
+  
   message_header("Compute credible sets")
-  credible_sets(maindir)
+  credible_sets( maindir = maindir )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   define_loci_cs
+  #-------------------------------------------------------------------------------
+  
+  message_header("Define credible set-based loci")
+  define_loci_cs( maindir = maindir )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   lz_plot
+  #-------------------------------------------------------------------------------
+  
+  # Conditioned, separated
+  message_header("Create LocusZoom plots: conditioned, separated")
+  lz_plot( maindir=maindir, cond.or.uncond="cond",   merge.loci=FALSE )
+  
+  # Marginal, separated
+  message_header("Create LocusZoom plots: marginal, separated")
+  lz_plot( maindir=maindir, cond.or.uncond="uncond", merge.loci=FALSE )
+  
+  # Conditioned, merged
+  message_header("Create LocusZoom plots: conditioned, merged")
+  lz_plot( maindir=maindir, cond.or.uncond="cond",   merge.loci=TRUE )
+  
+  # Marginal, merged
+  message_header("Create LocusZoom plots: unconditioned, merged")
+  lz_plot( maindir=maindir, cond.or.uncond="uncond", merge.loci=TRUE )
+  
+  
+  #-------------------------------------------------------------------------------
+  #   Done
+  #-------------------------------------------------------------------------------
   
   # Done
-  message_header("Done!")
+  message_header("Done")
 }
 
 
