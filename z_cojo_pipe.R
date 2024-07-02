@@ -11,6 +11,7 @@
 #                       readable chunks
 # n_eff:                Get the effective sample size of a case-control GWAS
 # p_to_z:               Convert a P value into a z-score
+# z_to_p:               Convert a z-score into a P value
 
 # ensure_finished_jobs: Make sure all qsub jobs finish running before proceeding
 ensure_finished_jobs <- function(identifier){
@@ -62,6 +63,76 @@ p_to_z <- function( p, direction=NULL, limit=.Machine$double.xmin, log.p=FALSE )
   z
 }
 
+# z_to_p: Convert a z-score into a P value
+z_to_p <- function( z, log.p=FALSE ){
+  if(log.p){
+    log(2) + pnorm( -abs(z), log.p=TRUE )
+  }else{
+    2*pnorm( -abs(z) )
+  }
+}  
+
+
+#-------------------------------------------------------------------------------
+#   run_metal:               Meta-analyze multiple formatted GWASes
+#-------------------------------------------------------------------------------
+
+run_metal <- function( maindir, gw_dirs ){
+  
+  # Create the main directory, if it doesn't yet exist
+  dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
+  
+  # Check whether output file exists
+  outfile <- file.path( maindir, "metal1.dat.gz" )
+  if( file.exists(outfile) )  stop("METAL output file exists, stopping")
+  
+  # Find input GWASes
+  arg11_list <- list()
+  for( i in seq_along(gw_dirs) ){
+    
+    # Find the appropriate GWAS file
+    gw_file <- file.path( gw_dirs[i], "gwas_sumstats.tsv" )
+    qc_file <- file.path( gw_dirs[i], "gwas_sumstats.qc.tsv" )
+    if( file.exists(qc_file) )  gw_file <- qc_file
+    
+    # Construct the argument for processing this GWAS
+    arg11_list[[i]] <- paste( "PROCESS", gw_file )
+  }
+  arg11 <- unlist(arg11_list)
+  
+  # Construct simple arguments
+  arg1  <- "SCHEME STDERR"
+  arg2  <- "GENOMICCONTROL OFF"
+  arg3  <- "MAXWARNINGS 2"
+  arg4  <- "MARKER SNP"
+  arg5  <- "ALLELE A1 A2"
+  arg6  <- "PVALUE p"
+  arg7  <- "EFFECT b"
+  arg8  <- "STDERR se"
+  arg9  <- "CUSTOMVARIABLE NEff"
+  arg10 <- "LABEL NEff as N"
+  arg12 <- paste( "OUTFILE", file.path( maindir, "metal" ), ".dat" )
+  arg13 <- "ANALYZE HETEROGENEITY"
+  
+  # Stitch all arguments together
+  args  <- c( arg1, arg2, arg3,  arg4,  arg5,  arg6, arg7, 
+              arg8, arg9, arg10, arg11, arg12, arg13 )
+  
+  # Write METAL script to file
+  dir.create( path=maindir, showWarnings=FALSE, recursive=TRUE )
+  metal_script <- file.path( maindir, "metal_script.txt" )
+  writeLines( text=args, con=metal_script )
+  
+  # Run METAL
+  metal_bin <- "/projects/0/prjs0817/software/generic-metal/metal"
+  cmd <- paste( metal_bin, metal_script )
+  system(cmd)
+  
+  # Compress output file
+  suppressPackageStartupMessages( library(R.utils) )
+  gzip( file.path( maindir, "metal1.dat" ) )
+}
+
 
 #-------------------------------------------------------------------------------
 #   check_arguments:         Check validity of inputs
@@ -70,6 +141,7 @@ p_to_z <- function( p, direction=NULL, limit=.Machine$double.xmin, log.p=FALSE )
 check_arguments <- function( ld_panel         = NULL, 
                              population       = NULL,
                              gw_file          = NULL,
+                             rsid_col         = NULL,
                              chr_bp_col       = NULL,
                              chr_col          = NULL,
                              bp_col           = NULL,
@@ -81,6 +153,7 @@ check_arguments <- function( ld_panel         = NULL,
                              n0_col           = NULL,
                              n_col            = NULL,
                              n                = NULL,
+                             inflation_factor = NULL,
                              p_threshold      = NULL,
                              do_test          = NULL,
                              do_qc            = NULL,
@@ -90,22 +163,24 @@ check_arguments <- function( ld_panel         = NULL,
   if( ld_panel != "hrc" & ld_panel != "g1000" ) stop("ld_panel must be either 'hrc' or 'g1000'")
   
   # population must be one of: "eur", "eas", or "eur_eas"
-  if( population != "eur" & population != "eas" & population != "eur_eas" ){
-    stop("population must be one of: 'eur', 'eas', or 'eur_eas'")
+  if( population != "eur" & population != "eas" & population != "afr" & 
+      population != "eur0.80_eas0.20"  & population != "eur0.89_eas0.11" &
+      population != "eur0.92_eas0.08" ){
+    stop( "population must be one of: 'eur', 'eas', 'afr', ",
+          "'eur0.80_eas0.20', 'eur0.89_eas0.11', 'eur0.92_eas0.08'" )
   }
   
   # Does the GWAS file exist?
   if( !file.exists(gw_file) )  stop("GWAS file does not exist")
   
-  # Either chr_bp_col or (chr_col + bp_col) must be specified
-  if( is.null(chr_bp_col) ){
-    if( is.null(chr_col) | is.null(bp_col) ){
-      stop("chr_bp_col is not specified so both chr_col and bp_col must be specified")
-    }
-  }else{
-    if( !is.null(chr_col) | !is.null(bp_col) ){
-      stop("chr_bp_col is specified so chr_col and bp_col must not be specified")
-    }
+  # Either rsid_col, chr_bp_col, or (chr_col + bp_col) must be specified
+  null_rsid            <- is.null(rsid_col)
+  null_chr_bp          <- is.null(chr_bp_col)
+  null_chr_and_null_bp <- is.null(chr_col) | is.null(bp_col)
+  not_null_sum <- sum( c( !null_rsid, !null_chr_bp, !null_chr_and_null_bp ) )
+  if( not_null_sum != 1 ){
+    stop( "One (and only one) of the following must be specified: ",
+          "rsid_col, chr_bp_col, (chr_col and bp_col)" )
   }
   
   # One of the following must be specified:
@@ -125,7 +200,7 @@ check_arguments <- function( ld_panel         = NULL,
   }
   
   # Check that GWAS file column names exist
-  col.names <- c( chr_bp_col, chr_col, bp_col, a1_col, a2_col, 
+  col.names <- c( rsid_col, chr_bp_col, chr_col, bp_col, a1_col, a2_col, 
                   p_col, eaf_col, n1_col, n0_col, n_col )
   library(data.table)
   gw <- fread( file=gw_file, nrows=100 )
@@ -183,6 +258,9 @@ check_arguments <- function( ld_panel         = NULL,
     if( n <= 0 )         stop("Effective sample size must be > 0")
   }
   
+  # Inflation factor must be numeric
+  if( !is.numeric(inflation_factor) )  stop("Inflation factor must be numeric")
+  
   # P value threshold must be >= 0 and <= 1
   if( !is.null(p_threshold) ){
     if( !is.numeric(p_threshold) ) stop("P value threshold must be numeric")
@@ -208,59 +286,96 @@ read_reference_snps <- function( ld_panel            = "hrc",
   # Find the correct set of reference panel SNPs
   if( ld_panel == "hrc" ){
     
-    # Population: Merged EUR and EAS
-    if( population == "eur_eas" ){
+    # Population: eur0.80_eas0.20
+    if( population == "eur0.80_eas0.20" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur0.80_eas0.20_snps_maf_ge_0.01.tsv"
       
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EUR+EAS MAF >= 1%")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_maf_ge_0.01.tsv"
-        
-        # Rare SNPs (MAC >= 10)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EUR+EAS MAC >= 10")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_eas_snps_mac_ge_10.tsv"
-      }
+    # Population: eur0.89_eas0.11
+    }else if( population == "eur0.89_eas0.11" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur0.89_eas0.11_snps_maf_ge_0.01.tsv"
       
-      # Population: EUR
+    # Population: eur0.92_eas0.08
+    }else if( population == "eur0.92_eas0.08" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur0.92_eas0.08_snps_maf_ge_0.01.tsv"
+      
+    # Population: eur
     }else if( population == "eur" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_maf_ge_0.01.tsv"
       
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EUR MAF >= 1%")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_maf_ge_0.01.tsv"
-        
-        # Rare SNPs (MAC >= 5)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EUR MAC >= 5")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eur_snps_mac_ge_5.tsv"
-      }
-      
-      # Population: EAS
+    # Population: eas
     }else if( population == "eas" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_maf_ge_0.01.tsv"
       
-      # Common SNPs (MAF >= 1%)
-      if( rare.or.common.snps == "common" ){
-        message2("Read in HRC SNPs with EAS MAF >= 1%")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_maf_ge_0.01.tsv"
-        
-        # Rare SNPs (MAC >= 5)
-      }else if( rare.or.common.snps == "rare" ){
-        message2("Read in HRC SNPs with EAS MAC >= 5")
-        hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_eas_snps_mac_ge_5.tsv"
-      }
-    }
-    
+    }else if( population == "afr" ){
+      hfile <- "/projects/0/prjs0817/projects/pops/data/hrc_afr_snps_maf_ge_0.01.tsv"
+    }  
   }else if( ld_panel == "g1000" ){
-    message2("Read in 1000 Genomes SNPs with EUR MAC >= 10")
     hfile <- "/home/heilbron/projects/pops/data/g1000_eur_snps_mac_ge_10.tsv"
   }
   
+  # If rare, update file name
+  if( rare.or.common.snps == "rare" ){
+    hfile <- sub( pattern="_maf_ge_0.01.tsv$", replacement="_mac_ge_5.tsv", x=hfile )
+  }
+  
+  # Prepare to message
+  panel <- ifelse( ld_panel == "hrc",             "HRC",      "1000 Genomes" )
+  maf   <- ifelse( rare.or.common.snps == "rare", "MAC >= 5", "MAF >= 1%" )
+  msg   <- paste( "Read in", panel, "SNPs with", population, maf )
+  
   # Read in reference panel SNPs
+  message2(msg)
   hrc <- fread(hfile)
   
   # Return
   return(hrc)
+}
+
+
+#-------------------------------------------------------------------------------
+#   get_bed_dir_or_suffix:   Extract BED directory or suffix from population
+#-------------------------------------------------------------------------------
+
+get_bed_dir_or_suffix <- function( population, dir_or_suff ){
+  
+  # Population: eur0.80_eas0.20
+  if( population == "eur0.80_eas0.20" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/SCZ"
+    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
+    
+  # Population: eur0.89_eas0.11
+  }else if( population == "eur0.89_eas0.11" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/PD"
+    bed_suff <- ".impute.plink.combined.EUR.4322.EAS.538"
+    
+  # Population: eur0.92_eas0.08
+  }else if( population == "eur0.92_eas0.08" ){
+    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/BIP"
+    bed_suff <- ".impute.plink.combined.EUR.6529.EAS.538"
+    
+  # Population: eur
+  }else if( population == "eur" ){
+    bed_dir  <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/HRC.r1-1_consistent_size/pop_EUR" )
+    bed_suff <- ".impute.plink.EUR.16860"
+    
+  # Population: eas
+  }else if( population == "eas" ){
+    bed_dir  <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/HRC.r1-1_consistent_size/pop_EAS" )
+    bed_suff <- ".impute.plink.EAS.538"
+    
+  # Population: afr
+  }else if( population == "afr" ){
+    bed_dir  <- file.path( "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/",
+                           "HRC_reference.r1-1/pop_AFR/" )
+    bed_suff <- ".impute.plink.AFR"
+  }
+  
+  # Return
+  if( dir_or_suff == "dir"  )  out <- bed_dir
+  if( dir_or_suff == "suff" )  out <- bed_suff
+  return(out)
 }
 
 
@@ -272,6 +387,7 @@ format_gwas <- function( maindir          = "~/cojo",
                          ld_panel         = "hrc",
                          population       = "eur_eas",
                          gw_file          = "/home/heilbron/projects/pops/analyses/pd/meta5_raw.tab.gz",
+                         rsid_col         = NULL,
                          chr_bp_col       = "SNP",
                          chr_col          = NULL,
                          bp_col           = NULL,
@@ -286,6 +402,7 @@ format_gwas <- function( maindir          = "~/cojo",
                          n0_col           = "N_controls",
                          n_col            = NULL,
                          n                = NULL,
+                         inflation_factor = 1,
                          p_threshold      = 1 ){
   
   # If output files already exist, skip
@@ -300,14 +417,22 @@ format_gwas <- function( maindir          = "~/cojo",
   #   maindir:    Main directory in which to store results
   #   ld_panel:   Which LD reference panel should be used? Options are either: 
   #               "hrc" or "g1000".
+  #   population:       Which population should be used? Options are: 
+  #                     "eur", "eas", "afr", "eur0.80_eas0.20", 
+  #                     "eur0.89_eas0.11", or "eur0.92_eas0.08"
   #   gw_file:    GWAS file name
-  #   chr_bp_col: Optional. The name of a GWAS column containing chromosome and bp 
-  #               information separated by a punctuation character. Must be
-  #               specified if chr_col and bp_col are not specified.
+  #   rsid_col:   Optional. The name of a GWAS column containing rsID. Must be
+  #               specified if chr_col and bp_col (or chr_bp_col) are not 
+  #               specified.
+  #   chr_bp_col: Optional. The name of a GWAS column containing chromosome and 
+  #               bp information separated by a punctuation character. Must be
+  #               specified if chr_col and bp_col (or rsid_col) are not specified.
   #   chr_col:    Optional. The name of a GWAS column containing chromosome
-  #               information. Must be specified if chr_bp_col is not specified.
+  #               information. Must be specified if rsid_col or chr_bp_col are 
+  #               not specified.
   #   bp_col:     Optional. The name of a GWAS column containing position (bp)
-  #               information. Must be specified if chr_bp_col is not specified.
+  #               information. Must be specified if rsid_col or chr_bp_col are 
+  #               not specified.
   #   a1_col:     The name of a GWAS column containing the effect (alt) allele
   #   a2_col:     The name of a GWAS column containing the non-effect (ref) allele
   #   p_col:      The name of a GWAS column containing the P value
@@ -353,6 +478,7 @@ format_gwas <- function( maindir          = "~/cojo",
   
   # Re-name GWAS columns
   message2("Re-name GWAS columns")
+  names(gw0)[ names(gw0) == rsid_col ]   <- "rsid"
   names(gw0)[ names(gw0) == chr_bp_col ] <- "chr_bp"
   names(gw0)[ names(gw0) == chr_col    ] <- "chr"
   names(gw0)[ names(gw0) == bp_col     ] <- "bp"
@@ -375,9 +501,9 @@ format_gwas <- function( maindir          = "~/cojo",
     gw <- gw0
   }
   
-  # Make columns for chromosome and position
+  # Separate chr_bp column into chromosome and position
   if( "chr_bp" %in% names(gw) ){
-    message2("Make columns for chromosome and position")
+    message2("Separate chr_bp column into chromosome and position")
     pattern <- "^chr([[:alnum:]]+)[[:punct:]]([[:digit:]]+)$"
     gw$chr  <- as.integer( sub( pattern     = pattern, 
                                 replacement = "\\1", 
@@ -386,6 +512,19 @@ format_gwas <- function( maindir          = "~/cojo",
                                 replacement = "\\2", 
                                 x=gw$chr_bp ) )
   }
+  
+  # Extract chromosome and position from reference panel
+  if( "rsid" %in% names(gw) ){
+    message2("Extract chromosome and position from reference panel")
+    gw$chr <- hrc$chr[ match( gw$rsid, hrc$snp ) ]
+    gw$bp  <- hrc$bp[  match( gw$rsid, hrc$snp ) ]
+    gw     <- gw[ !is.na(gw$chr) & !is.na(gw$bp) , ]
+  }
+  
+  # Ensure that alleles are capitalized
+  message2("Ensure that alleles are capitalized")
+  gw$A1 <- toupper(gw$A1)
+  gw$A2 <- toupper(gw$A2)
   
   # Create a per-SNP effective sample size column
   #   If this column already exists, do nothing
@@ -417,23 +556,33 @@ format_gwas <- function( maindir          = "~/cojo",
     gw <- gw[ !is.na(gw$se) & gw$se!=0 , ]
   }
   
+  # Correct for test statistic inflation factor
+  if( inflation_factor > 1 ){
+    message2( "Correct for test statistic inflation factor: ", inflation_factor )
+    gw$se <- gw$se * sqrt(inflation_factor)
+    gw$p  <- z_to_p( gw$b / gw$se )
+  }
+  
   
   #-----------------------------------------------------------------------------
   #   Harmonize GWAS and reference panel alleles
   #-----------------------------------------------------------------------------
   
+  # To save memory, subset reference panel to positions found in the GWAS
+  hrc1 <- hrc[ hrc$bp %in% gw$bp , ]
+  
   # Subset GWAS and reference panel to shared SNPs based on chromosome and position
   message2("Subset GWAS and reference panel to shared SNPs based on chromosome ",
            "and position")
   cpab_gw  <- paste( gw$chr,  gw$bp,  
-                     ifelse( gw$A1   < gw$A2,   gw$A1,   gw$A2  ), 
-                     ifelse( gw$A1   < gw$A2,   gw$A2,   gw$A1  ),  sep="_" )
-  cpab_hrc <- paste( hrc$chr, hrc$bp, 
-                     ifelse( hrc$alt < hrc$ref, hrc$alt, hrc$ref ), 
-                     ifelse( hrc$alt < hrc$ref, hrc$ref, hrc$alt ), sep="_" )
+                     ifelse( gw$A1    < gw$A2,    gw$A1,    gw$A2  ), 
+                     ifelse( gw$A1    < gw$A2,    gw$A2,    gw$A1  ),  sep="_" )
+  cpab_hrc <- paste( hrc1$chr, hrc1$bp, 
+                     ifelse( hrc1$alt < hrc1$ref, hrc1$alt, hrc1$ref ), 
+                     ifelse( hrc1$alt < hrc1$ref, hrc1$ref, hrc1$alt ), sep="_" )
   cpab_both <- intersect( cpab_hrc, cpab_gw )
-  hrc2 <- hrc[ match( cpab_both, cpab_hrc ) , ]
-  gw2  <- gw[  match( cpab_both, cpab_gw  ) , ]
+  hrc2 <- hrc1[ match( cpab_both, cpab_hrc ) , ]
+  gw2  <- gw[   match( cpab_both, cpab_gw  ) , ]
   message2( "Of the ", NROW(gw), " GWAS SNPs, ", NROW(gw2), 
             " (", round( 100*NROW(gw2)/NROW(gw), 2 ), 
             "%) were found in the reference panel" )
@@ -461,14 +610,17 @@ format_gwas <- function( maindir          = "~/cojo",
   #-----------------------------------------------------------------------------
   
   # Check that CPRA is 100% identical now
-  cpra_gw  <- paste( gw2$chr,  gw2$bp,  gw2$A2,   gw2$A1,   sep="_" )
-  cpra_hrc <- paste( hrc2$chr, hrc2$bp, hrc2$ref, hrc2$alt, sep="_" )
-  if( all( cpra_gw == cpra_hrc ) ){
-    message2("CPRA is now identical for all GWAS and reference panel SNPs")
-  }else{
-    diff_cpra <- head( which( cpra_gw != cpra_hrc ) )
-    stop( paste( "Error: not all CPRA are identical for GWAS and reference panel",
-                 "SNPs. Here are (up to) the first 6:", diff_cpra, collapse=" " ) )
+  check_cpra <- FALSE
+  if(check_cpra){
+    cpra_gw  <- paste( gw2$chr,  gw2$bp,  gw2$A2,   gw2$A1,   sep="_" )
+    cpra_hrc <- paste( hrc2$chr, hrc2$bp, hrc2$ref, hrc2$alt, sep="_" )
+    if( all( cpra_gw == cpra_hrc ) ){
+      message2("CPRA is now identical for all GWAS and reference panel SNPs")
+    }else{
+      diff_cpra <- head( which( cpra_gw != cpra_hrc ) )
+      stop( paste( "Error: not all CPRA are identical for GWAS and reference panel",
+                   "SNPs. Here are (up to) the first 6:", diff_cpra, collapse=" " ) )
+    }
   }
   
   # Replace GWAS SNP names with reference panel names
@@ -587,6 +739,11 @@ qc_gwas <- function( maindir, ld_panel, population ){
     bad_snps <- diff_af | pcc
   }
   
+  # Throw an error if >10% of SNPs are QC'd out
+  if( mean(bad_snps) > 0.1 ){
+    stop(">10% of SNPs are being QC'd out, quitting")
+  }
+  
   # Remove flagged SNPs
   message2("Remove flagged SNPs")
   gw3  <- gw2[  !bad_snps , ]
@@ -647,22 +804,8 @@ define_loci_clump <- function( maindir, population, do_test=FALSE ){
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-  # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-  # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   
   #-----------------------------------------------------------------------------
@@ -916,22 +1059,8 @@ run_cojo_genome <- function( maindir, population="eur_eas" ){
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Create a directory for per-chromosome COJO outputs
   message2("Create a directory for per-chromosome COJO outputs")
@@ -1018,22 +1147,8 @@ run_cojo_local <- function( maindir, population, do_test=FALSE ){
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Read in the GWAS
   message2("Read in the GWAS")
@@ -1134,22 +1249,8 @@ run_cojo_cluster <- function( maindir, population="eur_eas", do_test=FALSE ){
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Create a directory for per-locus COJO outputs
   message2("Create a directory for per-locus COJO outputs")
@@ -1325,22 +1426,8 @@ isolate_signals_local <- function( maindir, population="eur_eas", do_test=FALSE 
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Create a directory for leave-one-hit-out conditioned sumstats
   message2("Create a directory for leave-one-hit-out conditioned sumstats")
@@ -1463,22 +1550,8 @@ isolate_signals_cluster <- function( maindir, population="eur_eas", do_test=FALS
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Create a directory for leave-one-hit-out conditioned sumstats
   message2("Create a directory for leave-one-hit-out conditioned sumstats")
@@ -1647,22 +1720,8 @@ ld_for_hits <- function( maindir, population ){
   # Set reference panel arguments based on population
   message2("Set reference panel arguments based on population")
   bed_pref <- "HRC.r1-1.EGA.GRCh37.chr"
-  
-  # Merged EUR + EAS
-  if( population == "eur_eas" ){
-    bed_dir  <- "/gpfs/work5/0/pgcdac/imputation_references/HRC.r1-1_merged_EUR_EAS_panel/"
-    bed_suff <- ".impute.plink.combined.EUR.2191.EAS.538"
-    
-    # Population: EUR
-  }else if( population == "eur" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EUR/"
-    bed_suff <- ".impute.plink.EUR"
-    
-    # Population: EAS
-  }else if( population == "eas" ){
-    bed_dir <- "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/HRC_reference.r1-1/pop_EAS/"
-    bed_suff <- ".impute.plink.EAS"
-  }
+  bed_dir  <- get_bed_dir_or_suffix( population=population, dir_or_suff="dir" )
+  bed_suff <- get_bed_dir_or_suffix( population=population, dir_or_suff="suff" )
   
   # Find all conditioned sumstats files
   loho_dir  <- file.path( maindir, "loho_conditioned_sumstats" )
@@ -1838,13 +1897,6 @@ define_loci_cs <- function(maindir){
   message2("Load libraries and sources")
   suppressMessages( library(data.table) )
   
-  # If output files already exist, skip
-  cs_loci_file <- file.path( maindir, "loci_cs.tsv" )
-  if( file.exists(cs_loci_file) ){
-    message2("Credible set-based locus file already exists, skipping")
-    stop()
-  }
-  
   # Read in gene locations
   message2("Read in gene locations")
   genes <- fread("/projects/0/prjs0817/projects/pops/data/gene_locations.tsv")
@@ -1891,8 +1943,9 @@ define_loci_cs <- function(maindir){
   #-----------------------------------------------------------------------------
   
   message2("Write credible set-based loci to file")
-  cs_loci <- do.call( rbind, cs_loci0 )
-  cs_loci <- cs_loci[ order( cs_loci$chr, cs_loci$centre ) , ]
+  cs_loci      <- do.call( rbind, cs_loci0 )
+  cs_loci      <- cs_loci[ order( cs_loci$chr, cs_loci$centre ) , ]
+  cs_loci_file <- file.path( maindir, "loci_cs.tsv" )
   fwrite( x=cs_loci, file=cs_loci_file, sep="\t" )
 }
 
@@ -2072,6 +2125,7 @@ cojo_wrapper <- function( maindir          = "~/cojo",
                           ld_panel         = "hrc",
                           population       = "eur_eas",
                           gw_file          = "/home/heilbron/projects/pops/analyses/pd/meta5_raw.tab.gz",
+                          rsid_col         = NULL,
                           chr_bp_col       = "SNP",
                           chr_col          = NULL,
                           bp_col           = NULL,
@@ -2086,6 +2140,7 @@ cojo_wrapper <- function( maindir          = "~/cojo",
                           n0_col           = "N_controls",
                           n_col            = NULL,
                           n                = NULL,
+                          inflation_factor = 1,
                           p_threshold      = 1,
                           do_test          = FALSE,
                           do_qc            = FALSE,
@@ -2100,8 +2155,9 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   #   maindir:          Main directory in which to store results
   #   ld_panel:         Which LD reference panel should be used? Options are 
   #                     either: "hrc" or "g1000".
-  #   population:       Which populations should be used? Options are: 
-  #                     "eur", "eas", or "eur_eas".
+  #   population:       Which population should be used? Options are: 
+  #                     "eur", "eas", "afr", "eur0.80_eas0.20", 
+  #                     "eur0.89_eas0.11", or "eur0.92_eas0.08"
   #   gw_file:          GWAS file name
   #   chr_bp_col:       Optional. The name of a GWAS column containing 
   #                     chromosome and bp information separated by a punctuation 
@@ -2158,6 +2214,7 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   message2( "LD reference panel:                  ", ld_panel )
   message2( "Population:                          ", population )
   message2( "GWAS file:                           ", gw_file )
+  message2( "rsID column name:                    ", rsid_col )
   message2( "Chromosome and position column name: ", chr_bp_col )
   message2( "Chromosome column name:              ", chr_col )
   message2( "Position column name:                ", bp_col )
@@ -2172,6 +2229,7 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   message2( "Control sample size column name:     ", n0_col )
   message2( "Effective sample size column name:   ", n_col )
   message2( "Effective sample size:               ", n )
+  message2( "Inflation factor:                    ", inflation_factor )
   message2( "P value threshold:                   ", p_threshold )
   message2( "Do test?:                            ", do_test )
   message2( "Do QC?:                              ", do_qc )
@@ -2186,24 +2244,26 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   if(check_args){
     message_header("Check arguments")
     message2("Checking arguments")
-    check_arguments( ld_panel    = ld_panel, 
-                     population  = population,
-                     gw_file     = gw_file,
-                     chr_bp_col  = chr_bp_col,
-                     chr_col     = chr_col,
-                     bp_col      = bp_col,
-                     a1_col      = a1_col,
-                     a2_col      = a2_col,
-                     p_col       = p_col,
-                     eaf_col     = eaf_col,
-                     n1_col      = n1_col,
-                     n0_col      = n0_col,
-                     n_col       = n_col,
-                     n           = n,
-                     p_threshold = p_threshold,
-                     do_test     = do_test,
-                     do_qc       = do_qc,
-                     do_dentist  = do_dentist )
+    check_arguments( ld_panel         = ld_panel, 
+                     population       = population,
+                     gw_file          = gw_file,
+                     rsid_col         = rsid_col,
+                     chr_bp_col       = chr_bp_col,
+                     chr_col          = chr_col,
+                     bp_col           = bp_col,
+                     a1_col           = a1_col,
+                     a2_col           = a2_col,
+                     p_col            = p_col,
+                     eaf_col          = eaf_col,
+                     n1_col           = n1_col,
+                     n0_col           = n0_col,
+                     n_col            = n_col,
+                     n                = n,
+                     inflation_factor = inflation_factor,
+                     p_threshold      = p_threshold,
+                     do_test          = do_test,
+                     do_qc            = do_qc,
+                     do_dentist       = do_dentist )
   }
   
   
@@ -2218,6 +2278,7 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   gw_outfile      <- file.path( maindir, "gwas_sumstats.tsv" )
   qc_outfile      <- file.path( maindir, "gwas_sumstats.qc.tsv" )
   dentist_outfile <- file.path( maindir, "gwas_sumstats.dentist.tsv" )
+  cs_loci_file    <- file.path( maindir, "loci_cs.tsv" )
   
   
   #-------------------------------------------------------------------------------
@@ -2229,25 +2290,26 @@ cojo_wrapper <- function( maindir          = "~/cojo",
     message2("GWAS sumstats file exist, skipping")
     
   }else{
-    format_gwas( maindir     = maindir,
-                 ld_panel    = ld_panel,
-                 population  = population,
-                 gw_file     = gw_file,
-                 chr_bp_col  = chr_bp_col,
-                 chr_col     = chr_col,
-                 bp_col      = bp_col,
-                 a1_col      = a1_col,
-                 a2_col      = a2_col,
-                 b_col       = b_col,
-                 or_col      = or_col,
-                 se_col      = se_col,
-                 p_col       = p_col,
-                 eaf_col     = eaf_col,
-                 n1_col      = n1_col,
-                 n0_col      = n0_col,
-                 n_col       = n_col,
-                 n           = n,
-                 p_threshold = p_threshold )
+    format_gwas( maindir          = maindir,
+                 ld_panel         = ld_panel,
+                 population       = population,
+                 gw_file          = gw_file,
+                 chr_bp_col       = chr_bp_col,
+                 chr_col          = chr_col,
+                 bp_col           = bp_col,
+                 a1_col           = a1_col,
+                 a2_col           = a2_col,
+                 b_col            = b_col,
+                 or_col           = or_col,
+                 se_col           = se_col,
+                 p_col            = p_col,
+                 eaf_col          = eaf_col,
+                 n1_col           = n1_col,
+                 n0_col           = n0_col,
+                 n_col            = n_col,
+                 n                = n,
+                 inflation_factor = inflation_factor,
+                 p_threshold      = p_threshold )
   }
   
   
@@ -2347,7 +2409,11 @@ cojo_wrapper <- function( maindir          = "~/cojo",
   #-------------------------------------------------------------------------------
   
   message_header("Define credible set-based loci")
-  define_loci_cs( maindir = maindir )
+  if( file.exists(cs_loci_file) ){
+    message2("Credible set-based locus file already exists, skipping")
+  }else{
+    define_loci_cs( maindir = maindir )
+  }
   
   
   #-------------------------------------------------------------------------------
