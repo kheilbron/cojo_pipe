@@ -367,9 +367,9 @@ get_bed_dir_or_suffix <- function( population, dir_or_suff ){
     
   # Population: afr
   }else if( population == "afr" ){
-    bed_dir  <- file.path( "/gpfs/work5/0/pgcdac/DWFV2CJb8Piv_0116_pgc_data/",
-                           "HRC_reference.r1-1/pop_AFR/" )
-    bed_suff <- ".impute.plink.AFR"
+    bed_dir  <- file.path( "/gpfs/work5/0/pgcdac/imputation_references/",
+                           "HRC.r1-1_merged_EUR_EAS_panel/HRC.r1-1_consistent_size/pop_AFR" )
+    bed_suff <- ".impute.plink.AFR.781"
   }
   
   # Return
